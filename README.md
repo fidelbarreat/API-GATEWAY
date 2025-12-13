@@ -1,2 +1,4 @@
 # API-GATEWAY
-Trabajo de Grado Diego Caceres y Fidel Barreat
+Trabajo de Grado 
+Diego Caceres  
+Fidel Barreat
