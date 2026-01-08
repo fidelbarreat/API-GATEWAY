@@ -1,0 +1,9 @@
+{
+  "posts": [
+    { "id": 1, "title": "hello" },
+    { "id": 2, "title": "world" }
+  ],
+  "comments": [
+    { "id": 1, "body": "nice", "postId": 1 }
+  ]
+}
