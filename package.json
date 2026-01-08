@@ -1,0 +1,24 @@
+{
+  "name": "api-gateway",
+  "version": "1.0.0",
+  "description": "Trabajo de Grado",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diegoccrs/API-GATEWAY.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/diegoccrs/API-GATEWAY/issues"
+  },
+  "homepage": "https://github.com/diegoccrs/API-GATEWAY#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^3.0.5"
+  }
+}
