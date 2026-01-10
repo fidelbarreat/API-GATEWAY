@@ -2,8 +2,9 @@
   "name": "api-gateway",
   "version": "1.0.0",
   "description": "Trabajo de Grado",
-  "main": "index.js",
+  "main": "gateway.js",
   "scripts": {
+    "start": "node gateway.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -18,7 +19,9 @@
   },
   "homepage": "https://github.com/diegoccrs/API-GATEWAY#readme",
   "dependencies": {
+    "dotenv": "^16.4.7",
     "express": "^5.2.1",
-    "http-proxy-middleware": "^3.0.5"
+    "http-proxy-middleware": "^3.0.5",
+    "nodemailer": "^7.0.12"
   }
 }

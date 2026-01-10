@@ -1,8 +1,15 @@
+try {
+  require('dotenv').config();
+} catch (_e) {
+  // dotenv es opcional; si no está instalado, se usan variables del entorno del sistema.
+}
+
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { iniciarMonitorSaludBackend } = require('./monitor');
 
-const TARGET = process.env.TARGET || 'http://localhost:4000';
-const PORT   = process.env.PORT   || 3000;
+const DESTINO = process.env.DESTINO || process.env.TARGET || 'http://localhost:4000';
+const PUERTO = Number(process.env.PUERTO || process.env.PORT || 3000);
 
 const app = express();
 
@@ -19,9 +26,11 @@ app.use((req, res, next) => {
   next();
 });
 
+iniciarMonitorSaludBackend(app, { destino: DESTINO });
+
 // Proxy reverso
 app.use('/', createProxyMiddleware({
-  target: TARGET,
+  target: DESTINO,
   changeOrigin: true,
   ws: true,
   onError: (err, _req, res) => {
@@ -30,4 +39,4 @@ app.use('/', createProxyMiddleware({
   }
 }));
 
-app.listen(PORT, () => console.log(`Gateway running on http://localhost:${PORT} → ${TARGET}`));
+app.listen(PUERTO, () => console.log(`Gateway running on http://localhost:${PUERTO} → ${DESTINO}`));
