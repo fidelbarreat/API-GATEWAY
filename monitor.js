@@ -8,6 +8,7 @@ const nodemailer = require('nodemailer');
 const http = require('http');
 const https = require('https');
 
+// Lee un valor numérico desde las variables de entorno y devuelve un valor por defecto si no está configurado.
 function obtenerNumeroEnv(nombre, valorPorDefecto) {
   const valor = process.env[nombre];
   if (valor === undefined || valor === null || valor === '') return valorPorDefecto;
@@ -15,12 +16,14 @@ function obtenerNumeroEnv(nombre, valorPorDefecto) {
   return Number.isFinite(numero) ? numero : valorPorDefecto;
 }
 
+// Interpreta un valor de entorno como booleano, aceptando variantes comunes como "true", "1", "yes", etc.
 function obtenerBooleanoEnv(nombre, valorPorDefecto) {
   const valor = process.env[nombre];
   if (valor === undefined || valor === null || valor === '') return valorPorDefecto;
   return ['1', 'true', 'TRUE', 'si', 'SI', 'yes', 'YES'].includes(String(valor));
 }
 
+// Construye la URL completa para el healthcheck del backend, combinando la URL base con la ruta configurada.
 function construirUrlHealthcheckExterno({ destino }) {
   const urlDirecta = process.env.URL_HEALTHCHECK_EXTERNO || process.env.HEALTHCHECK_URL;
   if (urlDirecta) return urlDirecta;
@@ -31,6 +34,7 @@ function construirUrlHealthcheckExterno({ destino }) {
   return `${base}${rutaNormalizada}`;
 }
 
+// Realiza una solicitud HTTP/HTTPS a una URL y devuelve el código de estado y el tiempo de respuesta.
 function solicitarUrl({ url, timeoutMs }) {
   return new Promise((resolve, reject) => {
     let urlObj;
@@ -62,6 +66,7 @@ function solicitarUrl({ url, timeoutMs }) {
   });
 }
 
+// Configura el transportador de correo SMTP basándose en las variables de entorno disponibles.
 function crearTransportadorCorreo() {
   const HOST_SMTP = process.env.HOST_SMTP || process.env.SMTP_HOST;
   const PUERTO_SMTP = obtenerNumeroEnv('PUERTO_SMTP', obtenerNumeroEnv('SMTP_PORT', 587));
@@ -86,48 +91,24 @@ function crearTransportadorCorreo() {
   };
 }
 
-function iniciarMonitorSaludBackend(app, { destino } = {}) {
-  if (!app) throw new Error('iniciarMonitorSaludBackend requiere una instancia de Express (app).');
-  if (!destino) throw new Error('iniciarMonitorSaludBackend requiere { destino }.');
-
-  const URL_HEALTHCHECK_EXTERNO = construirUrlHealthcheckExterno({ destino });
-
-  const INTERVALO_HEALTHCHECK_MS = obtenerNumeroEnv(
-    'INTERVALO_HEALTHCHECK_MS',
-    obtenerNumeroEnv('HEALTHCHECK_INTERVAL_MS', 30_000)
-  );
-  const TIMEOUT_HEALTHCHECK_MS = obtenerNumeroEnv(
-    'TIMEOUT_HEALTHCHECK_MS',
-    obtenerNumeroEnv('HEALTHCHECK_TIMEOUT_MS', 5_000)
-  );
-
-  const UMBRAL_LATENCIA_MS = obtenerNumeroEnv(
-    'UMBRAL_LATENCIA_MS',
-    obtenerNumeroEnv('HEALTHCHECK_MAX_LATENCY_MS', 1500)
-  );
-  const GOLPES_LATENCIA_ALTA = obtenerNumeroEnv(
-    'GOLPES_LATENCIA_ALTA',
-    obtenerNumeroEnv('HEALTHCHECK_HIGH_LATENCY_STRIKES', 2)
-  );
-  const GOLPES_FALLO = obtenerNumeroEnv(
-    'GOLPES_FALLO',
-    obtenerNumeroEnv('HEALTHCHECK_FAIL_STRIKES', 2)
-  );
-
-  const ENFRIAMIENTO_ALERTA_MS = obtenerNumeroEnv(
-    'ENFRIAMIENTO_ALERTA_MS',
-    obtenerNumeroEnv('ALERT_COOLDOWN_MS', 10 * 60_000)
-  );
+// Crea un monitor individual para una API específica.
+function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, ALERTA_PARA }) {
+  const INTERVALO_HEALTHCHECK_MS = obtenerNumeroEnv('INTERVALO_HEALTHCHECK_MS', 30_000);
+  const TIMEOUT_HEALTHCHECK_MS = obtenerNumeroEnv('TIMEOUT_HEALTHCHECK_MS', 5_000);
+  const UMBRAL_LATENCIA_MS = obtenerNumeroEnv('UMBRAL_LATENCIA_MS', 1500);
+  const GOLPES_LATENCIA_ALTA = obtenerNumeroEnv('GOLPES_LATENCIA_ALTA', 2);
+  const GOLPES_FALLO = obtenerNumeroEnv('GOLPES_FALLO', 2);
+  const ENFRIAMIENTO_ALERTA_MS = obtenerNumeroEnv('ENFRIAMIENTO_ALERTA_MS', 600_000);
   const ALERTAR_RECUPERACION = obtenerBooleanoEnv('ALERTAR_RECUPERACION', true);
 
-  const { transportadorCorreo, DESDE_SMTP, ALERTA_PARA } = crearTransportadorCorreo();
-
   const estadoMonitor = {
-    urlBackend: URL_HEALTHCHECK_EXTERNO,
+    uuid,
+    nombre,
+    url,
     ultimoChequeoTs: null,
     ultimoOkTs: null,
     ultimoFalloTs: null,
-    ultimoEstado: 'DESCONOCIDO', // ARRIBA | ABAJO | DEGRADADO | DESCONOCIDO
+    ultimoEstado: 'DESCONOCIDO',
     ultimaLatenciaMs: null,
     fallosConsecutivos: 0,
     latenciaAltaConsecutiva: 0,
@@ -141,7 +122,7 @@ function iniciarMonitorSaludBackend(app, { destino } = {}) {
     estadoMonitor.ultimaAlertaTs = ahora;
 
     if (!transportadorCorreo) {
-      console.warn('[ALERTA omitida] SMTP no configurado:', { asunto, texto });
+      console.warn('[ALERTA omitida] SMTP no configurado:', { asunto });
       return;
     }
 
@@ -153,25 +134,24 @@ function iniciarMonitorSaludBackend(app, { destino } = {}) {
     });
   }
 
-  async function verificarBackendUnaVez() {
+  async function verificarUnaVez() {
     const ahora = Date.now();
     estadoMonitor.ultimoChequeoTs = ahora;
 
     try {
       const { statusCode, latenciaMs } = await solicitarUrl({
-        url: URL_HEALTHCHECK_EXTERNO,
+        url,
         timeoutMs: TIMEOUT_HEALTHCHECK_MS,
       });
 
       estadoMonitor.ultimaLatenciaMs = latenciaMs;
-
       const esOk = statusCode >= 200 && statusCode < 300;
       const esErrorServidor = statusCode >= 500;
 
       if (!esOk || esErrorServidor) {
         estadoMonitor.fallosConsecutivos += 1;
         estadoMonitor.ultimoFalloTs = ahora;
-        estadoMonitor.ultimoError = `Status inesperado: ${statusCode}`;
+        estadoMonitor.ultimoError = `Status: ${statusCode}`;
       } else {
         estadoMonitor.fallosConsecutivos = 0;
         estadoMonitor.ultimoOkTs = ahora;
@@ -197,56 +177,41 @@ function iniciarMonitorSaludBackend(app, { destino } = {}) {
       }
 
       if (estadoAnterior !== estadoMonitor.ultimoEstado) {
-        const detalle = [
-          `Backend: ${URL_HEALTHCHECK_EXTERNO}`,
-          `Estado: ${estadoAnterior} -> ${estadoMonitor.ultimoEstado}`,
-          `Latencia: ${latenciaMs} ms (umbral ${UMBRAL_LATENCIA_MS} ms)`,
-          `Fallos consecutivos: ${estadoMonitor.fallosConsecutivos} (umbral ${GOLPES_FALLO})`,
-          `Latencia alta consecutiva: ${estadoMonitor.latenciaAltaConsecutiva} (umbral ${GOLPES_LATENCIA_ALTA})`,
-          `Error: ${estadoMonitor.ultimoError || 'ninguno'}`,
-          `Ts: ${new Date(ahora).toISOString()}`,
-        ].join('\n');
+        const detalle = `API: ${nombre} (${uuid})\nURL: ${url}\nEstado: ${estadoAnterior} → ${estadoMonitor.ultimoEstado}\nLatencia: ${latenciaMs}ms\nTs: ${new Date(ahora).toISOString()}`;
 
         if (estadoMonitor.ultimoEstado === 'ABAJO') {
-          await enviarAlertaCorreo('[API-GW] BACKEND ABAJO', detalle);
+          await enviarAlertaCorreo(`[API-GW] ${nombre} ABAJO`, detalle);
         } else if (estadoMonitor.ultimoEstado === 'DEGRADADO') {
-          await enviarAlertaCorreo('[API-GW] BACKEND DEGRADADO', detalle);
+          await enviarAlertaCorreo(`[API-GW] ${nombre} DEGRADADO`, detalle);
         } else if (
           estadoMonitor.ultimoEstado === 'ARRIBA' &&
           ALERTAR_RECUPERACION &&
           (estadoAnterior === 'ABAJO' || estadoAnterior === 'DEGRADADO')
         ) {
-          await enviarAlertaCorreo('[API-GW] BACKEND RECUPERADO', detalle);
+          await enviarAlertaCorreo(`[API-GW] ${nombre} RECUPERADO`, detalle);
         }
       }
     } catch (err) {
       estadoMonitor.ultimaLatenciaMs = null;
       estadoMonitor.ultimoFalloTs = ahora;
       estadoMonitor.fallosConsecutivos += 1;
-      estadoMonitor.ultimoError = err && err.message ? err.message : String(err);
+      estadoMonitor.ultimoError = err?.message || String(err);
 
       const estadoAnterior = estadoMonitor.ultimoEstado;
-      estadoMonitor.ultimoEstado = (estadoMonitor.fallosConsecutivos >= GOLPES_FALLO) ? 'ABAJO' : 'DEGRADADO';
+      estadoMonitor.ultimoEstado = estadoMonitor.fallosConsecutivos >= GOLPES_FALLO ? 'ABAJO' : 'DEGRADADO';
 
       if (estadoAnterior !== estadoMonitor.ultimoEstado && estadoMonitor.ultimoEstado === 'ABAJO') {
-        const detalle = [
-          `Backend: ${URL_HEALTHCHECK_EXTERNO}`,
-          `Estado: ${estadoAnterior} -> ${estadoMonitor.ultimoEstado}`,
-          `Error: ${estadoMonitor.ultimoError}`,
-          `Ts: ${new Date(ahora).toISOString()}`,
-        ].join('\n');
-        await enviarAlertaCorreo('[API-GW] BACKEND ABAJO', detalle);
+        const detalle = `API: ${nombre} (${uuid})\nURL: ${url}\nError: ${estadoMonitor.ultimoError}\nTs: ${new Date(ahora).toISOString()}`;
+        await enviarAlertaCorreo(`[API-GW] ${nombre} ABAJO`, detalle);
       }
     }
   }
 
-  app.get('/gateway/salud-backend', (_req, res) => res.json({ ...estadoMonitor, ts: Date.now() }));
-  app.get('/gateway/backend-health', (_req, res) => res.json({ ...estadoMonitor, ts: Date.now() }));
-
+  // Iniciar chequeo periódico
   setTimeout(() => {
-    verificarBackendUnaVez().catch((e) => console.error('Healthcheck inicial falló:', e));
+    verificarUnaVez().catch((e) => console.error(`[${nombre}] Healthcheck falló:`, e));
     setInterval(() => {
-      verificarBackendUnaVez().catch((e) => console.error('Healthcheck periódico falló:', e));
+      verificarUnaVez().catch((e) => console.error(`[${nombre}] Healthcheck falló:`, e));
     }, INTERVALO_HEALTHCHECK_MS);
   }, 500);
 
@@ -255,6 +220,73 @@ function iniciarMonitorSaludBackend(app, { destino } = {}) {
   };
 }
 
+// Inicia el sistema de monitoreo para múltiples APIs.
+function iniciarMonitorMultiplesAPIs(app, apisConfig = {}) {
+  if (!app) throw new Error('iniciarMonitorMultiplesAPIs requiere una instancia de Express (app).');
+
+  const { transportadorCorreo, DESDE_SMTP, ALERTA_PARA } = crearTransportadorCorreo();
+  const monitores = {};
+
+  // Crear monitor para cada API activa
+  Object.entries(apisConfig).forEach(([uuid, config]) => {
+    if (config.activa) {
+      monitores[uuid] = crearMonitorAPI({
+        uuid,
+        nombre: config.nombre,
+        url: config.url,
+        transportadorCorreo,
+        DESDE_SMTP,
+        ALERTA_PARA,
+      });
+      console.log(`✓ Monitor iniciado: ${config.nombre} (${uuid})`);
+    }
+  });
+
+  // Endpoint: Estado individual por UUID
+  app.get('/gateway/salud/:uuid', (req, res) => {
+    const { uuid } = req.params;
+    const monitor = monitores[uuid];
+    
+    if (!monitor) {
+      return res.status(404).json({ error: 'API no encontrada o sin monitoreo' });
+    }
+    
+    res.json(monitor.obtenerEstado());
+  });
+
+  // Endpoint: Estado global de todas las APIs
+  app.get('/gateway/salud-global', (_req, res) => {
+    const estadoGlobal = {
+      ts: Date.now(),
+      totalAPIs: Object.keys(monitores).length,
+      resumen: {
+        arriba: 0,
+        abajo: 0,
+        degradado: 0,
+        desconocido: 0,
+      },
+      apis: {},
+    };
+
+    Object.entries(monitores).forEach(([uuid, monitor]) => {
+      const estado = monitor.obtenerEstado();
+      estadoGlobal.apis[uuid] = estado;
+      
+      const estadoKey = estado.ultimoEstado.toLowerCase();
+      if (estadoGlobal.resumen[estadoKey] !== undefined) {
+        estadoGlobal.resumen[estadoKey]++;
+      }
+    });
+
+    res.json(estadoGlobal);
+  });
+
+  return {
+    obtenerMonitor: (uuid) => monitores[uuid],
+    obtenerTodos: () => Object.entries(monitores).map(([uuid, m]) => ({ uuid, ...m.obtenerEstado() })),
+  };
+}
+
 module.exports = {
-  iniciarMonitorSaludBackend,
+  iniciarMonitorMultiplesAPIs,
 };
