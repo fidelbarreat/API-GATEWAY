@@ -1,3 +1,4 @@
+// gateway.js  (versión 3.3 – Redis + blacklist + métricas)
 try {
   require('dotenv').config();
 } catch (_e) {
@@ -10,12 +11,17 @@ const { iniciarMonitorMultiplesAPIs } = require('./monitor');
 const fs = require('fs');
 const path = require('path');
 
+// Middlewares Redis
+const blacklistMiddleware = require('./blacklist');
+const metricsMiddleware = require('./metrics');
+const { blacklist, metrics: metricsAPI } = require('./redis');
+
 const PUERTO = Number(process.env.PUERTO || process.env.PORT || 3000);
 const DB_PATH = path.join(__dirname, 'db.json');
 
 const app = express();
 
-// Cargar base de datos de APIs
+// Cargar catálogo de APIs
 function cargarAPIs() {
   try {
     const data = fs.readFileSync(DB_PATH, 'utf-8');
@@ -29,10 +35,10 @@ function cargarAPIs() {
 
 let apisDisponibles = cargarAPIs();
 
-// Health-check propio
+// Health-check propio del gateway
 app.get('/gateway/health', (_req, res) => res.json({ status: 'UP', ts: Date.now() }));
 
-// Endpoint para listar APIs disponibles
+// Listar APIs registradas
 app.get('/gateway/apis', (_req, res) => {
   const lista = Object.entries(apisDisponibles).map(([uuid, info]) => ({
     uuid,
@@ -41,27 +47,53 @@ app.get('/gateway/apis', (_req, res) => {
   res.json({ total: lista.length, apis: lista });
 });
 
-// Iniciar sistema de monitoreo (esto registra rutas /gateway/salud)
+// Endpoints Redis
+// Blacklist
+app.get('/gateway/blacklist', async (_req, res) => {
+  const list = await blacklist.list();
+  res.json({ total: list.length, ips: list });
+});
+
+app.delete('/gateway/blacklist/:ip', async (req, res) => {
+  await blacklist.remove(req.params.ip);
+  res.json({ msg: 'IP desbloqueada', ip: req.params.ip });
+});
+
+// Métricas
+app.get('/gateway/metrics', async (_req, res) => {
+  const day = new Date().toISOString().slice(0, 10);
+  const data = await metricsAPI.get(day);
+  res.json({ day, metrics: data });
+});
+
+app.get('/gateway/metrics/:uuid/latency', async (req, res) => {
+  const day = new Date().toISOString().slice(0, 10);
+  const lat = await metricsAPI.getLatencies(req.params.uuid, day);
+  const avg = lat.length ? (lat.reduce((a, b) => a + b, 0) / lat.length).toFixed(2) : 0;
+  res.json({ uuid: req.params.uuid, day, total: lat.length, avg, latencies: lat });
+});
+
+// Iniciar monitoreo multi-API (health-check + alertas)
 iniciarMonitorMultiplesAPIs(app, apisDisponibles);
 
-// Middleware para extraer UUID y redirigir a la API correspondiente
+//  Middlewares antes del proxy
+app.use('/:uuid', blacklistMiddleware, metricsMiddleware);
+
+// Middleware de extracción de UUID + proxy dinámico
 app.use((req, res, next) => {
-  // Ignorar rutas del gateway
+  // Ignorar rutas internas del gateway
   if (req.originalUrl.startsWith('/gateway')) {
     return next();
   }
 
   const match = req.originalUrl.match(/^\/([a-zA-Z0-9\-]+)\/(.*)$/);
-  
-  if (!match) {
-    return next();
-  }
+  if (!match) return next(); // pasará a la ruta por defecto
 
   const [, uuid, rest] = match;
   const apiConfig = apisDisponibles[uuid];
 
   if (!apiConfig) {
-    return res.status(404).json({ 
+    return res.status(404).json({
       error: 'API no encontrada',
       uuid,
       mensaje: 'El UUID proporcionado no corresponde a ninguna API registrada'
@@ -76,10 +108,8 @@ app.use((req, res, next) => {
     });
   }
 
-  // Construir la ruta real
   const rutaReal = `/${rest}`;
-  
-  // Crear proxy dinámico
+
   const proxy = createProxyMiddleware({
     target: apiConfig.url,
     changeOrigin: true,
@@ -97,7 +127,7 @@ app.use((req, res, next) => {
   return proxy(req, res, next);
 });
 
-// Ruta por defecto (sin UUID)
+// Ruta por defecto (cuando no hay UUID)
 app.use('/', (_req, res) => {
   res.status(400).json({
     error: 'UUID requerido',
@@ -109,7 +139,7 @@ app.use('/', (_req, res) => {
 app.listen(PUERTO, () => {
   console.log(`\nGateway running on http://localhost:${PUERTO}`);
   console.log(`Ver APIs: http://localhost:${PUERTO}/gateway/apis\n`);
-  
+
   Object.entries(apisDisponibles).forEach(([uuid, info]) => {
     if (info.activa) {
       console.log(`  ✓ ${info.nombre} → localhost:${PUERTO}/${uuid}/...`);

@@ -5,6 +5,22 @@ Diego Caceres
 
 Fidel Barreat
 
+## Stack Técnico
+- Node.js 20 + Express
+- http-proxy-middleware (routing)
+- ioredis (Redis Cloud)
+- nodemailer (alertas)
+- test-healthcheck.js (simulador de escenarios)
+
+## Archivos Principales 
+- `gateway.js`: servidor Express + proxies dinámicos
+- `monitor.js`: health-check + alertas SMTP
+- `redis.js`: conexión y helpers Redis
+- `blacklist.js`: anti-DoS + TTL auto
+- `metrics.js`: contadores y latencias
+- `test-healthcheck.js`: simulador de escenarios (puerto 9999)
+- `db.json`: catalogo de APIs (UUID, URL, activa)
+
 ## Ejecutar
 
 1) Instalar dependencias:
@@ -13,18 +29,54 @@ Fidel Barreat
 npm i
 ```
 
-2) Iniciar el gateway:
+2) Backend fake (simula caidas, lentitud, etc...) (terminal 1):
+
+```bash
+node test-healthcheck.js
+```
+
+3) Iniciar el gateway (terminal 2):
 
 ```bash
 npm start
 ```
 
-Por defecto escucha en `http://localhost:3000` y enruta a `http://localhost:4000`.
+4) Acciones (terminal 3):
+
+```bash
+curl localhost:3000/gateway/apis #Ver APIs
+```
+
+```bash
+curl localhost:3000/gateway/blacklist #Ver IPs bloqueadas
+```
+
+```bash
+for i in {1..22}; do curl -s localhost:3000/test-uuid-healthcheck/health > /dev/null; done #Superar umbral DoS
+```
+
+```bash
+curl localhost:3000/gateway/metrics #Ver métricas del día
+```
+
+```bash
+curl localhost:3000/test-uuid-healthcheck/health #Request bloqueada
+```
+
+```bash
+curl -X DELETE localhost:3000/gateway/blacklist/{ip} #Desbloquear IP
+```
 
 ## Endpoints
 
-- `GET /gateway/health`: salud del gateway.
-- `GET /gateway/salud-backend`: estado del health-check externo al backend.
+- `GET /gateway/health`: salud del gateway
+- `GET /gateway/apis`: Listar APIs registradas
+- `GET /gateway/salud/{UUID}`: Health de una API
+- `GET /gateway/salud-global`: Health de todas las APIs
+- `GET /gateway/blacklist`: IPs bloqueadas (TTL dinamico)
+- `DELETE /gateway/blacklist/{ip}`: Desbloquear IP
+- `GET /gateway/metrics`: Metricas del día (requests, bloqueos, errores)
+- `GET /gateway/metrics/{UUID}/latency`: Latencias (últimas 100)
 
 ## Health-check externo (backend) + alertas por correo
 
@@ -85,4 +137,9 @@ USUARIO_SMTP=tu_correo@dominio.com
 CLAVE_SMTP=tu_clave_o_app_password
 DESDE_SMTP=tu_correo@dominio.com
 ALERTA_PARA=destino_alertas@dominio.com
+
+REDIS_URI=redis://default:TU_CLAVE@redis-12345.c273.us-east-1-2.ec2.cloud.redislabs.com:12345
+BLACKLIST_TTL_DEFAULT=300
+BLACKLIST_TTL_DOS=3600
+METRICS_TTL=86400
 ```
