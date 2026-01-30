@@ -142,4 +142,70 @@ REDIS_URI=redis://default:TU_CLAVE@redis-12345.c273.us-east-1-2.ec2.cloud.redisl
 BLACKLIST_TTL_DEFAULT=300
 BLACKLIST_TTL_DOS=3600
 METRICS_TTL=86400
+
+# IA - Clasificador de amenazas
+OPENAI_API_KEY=sk-xxx
+AI_MODEL=gpt-5-mini
+AI_ENABLED=true
+AI_TIMEOUT=5000
+BLACKLIST_TTL_AI=3600
+```
+
+## Clasificador de Amenazas con IA (LLM)
+
+El gateway integra un sistema de clasificación de amenazas basado en IA que analiza cada petición y la clasifica en tres niveles de riesgo:
+
+| Clasificación | Acción |
+|---------------|--------|
+| `riesgo-alto` | Bloquea IP inmediatamente y la añade a la lista negra |
+| `riesgo-medio` | Permite la petición pero la marca con headers de advertencia |
+| `legitimo` | Permite sin restricciones |
+
+### Amenazas detectadas
+
+- **SQL Injection**: Intentos de inyección SQL en URL, query params o body
+- **XSS**: Cross-site scripting en cualquier parte de la petición
+- **DoS/DDoS**: Patrones de denegación de servicio (combinado con contador por IP)
+- **Scraping**: Detección por User-Agent y patrones de comportamiento
+- **Path Traversal**: Intentos de acceso a archivos del sistema
+
+### Arquitectura híbrida
+
+El clasificador usa un enfoque de dos capas para optimizar latencia:
+
+1. **Análisis heurístico (rápido)**: Patrones regex conocidos (~1-2ms)
+2. **Análisis LLM (profundo)**: Solo cuando hay indicios pero no es concluyente (~200-500ms)
+
+### Endpoints de IA
+
+```bash
+# Ver estado del clasificador IA
+curl localhost:3000/gateway/ai/status
+
+# Ver métricas de clasificación del día
+curl localhost:3000/gateway/ai/metrics
+```
+
+### Variables de entorno IA
+
+| Variable | Descripción | Default |
+|----------|-------------|---------|
+| `OPENAI_API_KEY` | API key de OpenAI | - |
+| `AI_MODEL` | Modelo a usar | `gpt-5-mini` |
+| `AI_ENABLED` | Activar/desactivar IA | `true` |
+| `AI_TIMEOUT` | Timeout para llamadas LLM (ms) | `5000` |
+| `BLACKLIST_TTL_AI` | TTL de bloqueo por IA (seg) | `3600`|
+
+### Ejemplo de respuesta bloqueada
+
+```json
+{
+  "error": "Petición bloqueada por sistema de seguridad IA",
+  "clasificacion": "riesgo-alto",
+  "amenazas": ["SQL_INJECTION"],
+  "confianza": 0.85,
+  "ip": "::1",
+  "ttl_bloqueo": 3600,
+  "mensaje": "Su IP ha sido bloqueada temporalmente..."
+}
 ```

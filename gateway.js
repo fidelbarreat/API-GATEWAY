@@ -16,6 +16,9 @@ const blacklistMiddleware = require('./blacklist');
 const metricsMiddleware = require('./metrics');
 const { blacklist, metrics: metricsAPI } = require('./redis');
 
+// Clasificador de amenazas con IA
+const { aiClassifierMiddleware, getAIMetrics } = require('./ai-classifier');
+
 const PUERTO = Number(process.env.PUERTO || process.env.PORT || 3000);
 const DB_PATH = path.join(__dirname, 'db.json');
 
@@ -73,11 +76,30 @@ app.get('/gateway/metrics/:uuid/latency', async (req, res) => {
   res.json({ uuid: req.params.uuid, day, total: lat.length, avg, latencies: lat });
 });
 
+// Métricas de IA
+app.get('/gateway/ai/metrics', async (_req, res) => {
+  const aiMetrics = await getAIMetrics();
+  res.json(aiMetrics);
+});
+
+// Estado del clasificador IA
+app.get('/gateway/ai/status', (_req, res) => {
+  res.json({
+    enabled: process.env.AI_ENABLED !== 'false',
+    model: process.env.AI_MODEL || 'gpt-5-mini',
+    api_key_configured: !!process.env.OPENAI_API_KEY
+  });
+});
+
 // Iniciar monitoreo multi-API (health-check + alertas)
 iniciarMonitorMultiplesAPIs(app, apisDisponibles);
 
-//  Middlewares antes del proxy
-app.use('/:uuid', blacklistMiddleware, metricsMiddleware);
+// Middleware para parsear JSON (necesario para análisis de body)
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+//  Middlewares antes del proxy: blacklist -> IA classifier -> metrics
+app.use('/:uuid', blacklistMiddleware, aiClassifierMiddleware, metricsMiddleware);
 
 // Middleware de extracción de UUID + proxy dinámico
 app.use((req, res, next) => {
