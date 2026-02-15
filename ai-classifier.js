@@ -21,7 +21,10 @@ const SQL_INJECTION_PATTERNS = [
   /(\b(union|select|insert|update|delete|drop|create|alter|exec|execute)\b.*\b(from|into|table|database)\b)/i,
   /(\b(or|and)\b\s*\d+\s*=\s*\d+)/i,
   /(\b(or|and)\b\s*['"]\d+['"]\s*=\s*['"]\d+['"])/i,
-  /(--|#|;|\/\*|\*\/)/,
+  // Comentarios SQL solo en contexto de query (no detecta "favicon")
+  /(\s'--[^\n]*$|;\s*--|['"]\s*--)/i,
+  /(#\s+.*$|;\s*#)/i,
+  /(\/\*.*?\*\/)/i,
   /(\bwaitfor\b\s+\bdelay\b|\bsleep\b\s*\()/i,
   /('[^']*'\s*(or|and)\s*'[^']*'\s*=\s*'[^']*')/i,
   /('\s*or\s*'.*'\s*=\s*')/i
@@ -42,6 +45,10 @@ const SCRAPING_INDICATORS = {
   highFrequencyThreshold: 50 // requests por minuto
 };
 
+// Recursos estáticos que nunca deben analizarse
+const STATIC_EXTENSIONS = /\.(ico|png|jpg|jpeg|gif|css|js|svg|woff|woff2|ttf|eot|map|json|xml)$/i;
+const STATIC_PATHS = /^\/(favicon\.ico|robots\.txt|sitemap\.xml|health|ping|\.well-known\/.*)$/i;
+
 /**
  * Analiza una petición de forma rápida sin IA (heurísticas)
  * @param {Object} requestData - Datos de la petición
@@ -49,6 +56,17 @@ const SCRAPING_INDICATORS = {
  */
 function quickAnalysis(requestData) {
   const { url, body, headers, method } = requestData;
+
+  // WHITELIST: Ignorar recursos estáticos completamente
+  if (STATIC_EXTENSIONS.test(url) || STATIC_PATHS.test(url)) {
+    return {
+      threats: [],
+      riskScore: 0,
+      quickClassification: RISK_THRESHOLDS.LOW,
+      skipped: true
+    };
+  }
+
   const threats = [];
   let riskScore = 0;
 
@@ -60,17 +78,17 @@ function quickAnalysis(requestData) {
     // Si falla el decode, usar original
   }
 
-  // Concatenar todo para análisis
-  const fullContent = `${decodedUrl} ${JSON.stringify(body || {})} ${JSON.stringify(headers || {})}`;
+  // Concatenar todo para análisis (excluir headers de navegador comunes)
+  const fullContent = `${decodedUrl} ${JSON.stringify(body || {})}`; // Headers removidos para evitar falsos positivos
   
-  console.log('[AI-CLASSIFIER] Analizando (decodificado):', fullContent.substring(0, 150));
+  console.log('[AI-CLASSIFIER] Analizando:', decodedUrl.substring(0, 100));
 
   // Detectar SQL Injection
   for (const pattern of SQL_INJECTION_PATTERNS) {
     if (pattern.test(fullContent)) {
       console.log('[AI-CLASSIFIER] ✓ SQL Injection detectado por patrón:', pattern);
       threats.push('SQL_INJECTION');
-      riskScore += 60; // Riesgo alto inmediato
+      riskScore += 60;
       break;
     }
   }
@@ -79,24 +97,28 @@ function quickAnalysis(requestData) {
   for (const pattern of XSS_PATTERNS) {
     if (pattern.test(fullContent)) {
       threats.push('XSS');
-      riskScore += 55; // Riesgo alto inmediato
+      riskScore += 55;
       break;
     }
   }
 
-  // Detectar posible scraping por User-Agent
+  // Detectar posible scraping por User-Agent (solo si no es navegador legítimo)
   const userAgent = headers?.['user-agent'] || '';
-  for (const pattern of SCRAPING_INDICATORS.userAgents) {
-    if (pattern.test(userAgent)) {
-      threats.push('POTENTIAL_SCRAPER');
-      riskScore += 15;
-      break;
+  const isBrowser = /Mozilla\/5\.0.*(Chrome|Firefox|Safari|Edge)/i.test(userAgent);
+  
+  if (!isBrowser) {
+    for (const pattern of SCRAPING_INDICATORS.userAgents) {
+      if (pattern.test(userAgent)) {
+        threats.push('POTENTIAL_SCRAPER');
+        riskScore += 15;
+        break;
+      }
     }
   }
 
   // Métodos sospechosos en rutas sensibles
   if (['DELETE', 'PUT', 'PATCH'].includes(method?.toUpperCase())) {
-    if (/admin|config|system|root/i.test(url)) {
+    if (/admin|config|system|root|api\/users|api\/admin/i.test(url)) {
       threats.push('SUSPICIOUS_ADMIN_ACCESS');
       riskScore += 25;
     }
@@ -195,7 +217,7 @@ async function aiClassifierMiddleware(req, res, next) {
   const requestData = {
     ip,
     method: req.method,
-    url: req.originalUrl,
+    url: req.originalUrl || req.url,
     queryParams: req.query,
     headers: {
       'user-agent': req.headers['user-agent'],
@@ -217,6 +239,11 @@ async function aiClassifierMiddleware(req, res, next) {
   try {
     // Paso 1: Análisis rápido (heurísticas)
     const quickResult = quickAnalysis(requestData);
+    
+    // Si es recurso estático, saltar todo
+    if (quickResult.skipped) {
+      return next();
+    }
     
     // Si el análisis rápido detecta riesgo alto, bloquear inmediatamente
     if (quickResult.quickClassification === RISK_THRESHOLDS.HIGH) {
@@ -263,17 +290,23 @@ async function aiClassifierMiddleware(req, res, next) {
     console.error('[AI-CLASSIFIER] Error general:', error.message);
     classification.razon = 'Error en clasificación, permitiendo por defecto';
     classification.metodo = 'error-passthrough';
+    // En caso de error, permitir pasar (fail-open para no bloquear tráfico legítimo)
+    return next();
   }
 
   const latencyMs = Date.now() - startTime;
 
-  // Registrar métricas
-  await metrics.incr(`ai:clasificaciones:${classification.clasificacion}`);
-  await metrics.incr(`ai:metodo:${classification.metodo}`);
-  if (classification.amenazas_detectadas?.length > 0) {
-    for (const threat of classification.amenazas_detectadas) {
-      await metrics.incr(`ai:amenaza:${threat}`);
+  // Registrar métricas (no bloquear si Redis falla)
+  try {
+    await metrics.incr(`ai:clasificaciones:${classification.clasificacion}`);
+    await metrics.incr(`ai:metodo:${classification.metodo}`);
+    if (classification.amenazas_detectadas?.length > 0) {
+      for (const threat of classification.amenazas_detectadas) {
+        await metrics.incr(`ai:amenaza:${threat}`);
+      }
     }
+  } catch (metricsError) {
+    console.error('[AI-CLASSIFIER] Error registrando métricas:', metricsError.message);
   }
 
   // Log para debugging
@@ -282,9 +315,13 @@ async function aiClassifierMiddleware(req, res, next) {
   // Ejecutar acción según clasificación
   if (classification.clasificacion === RISK_THRESHOLDS.HIGH) {
     // Bloquear IP y añadir a lista negra
-    const ttl = Number(process.env.BLACKLIST_TTL_AI || 3600); // 1 hora por defecto
-    await blacklist.add(ip, ttl);
-    await metrics.incr(`ai:bloqueos:${uuid}`);
+    const ttl = Number(process.env.BLACKLIST_TTL_AI || 3600);
+    try {
+      await blacklist.add(ip, ttl);
+      await metrics.incr(`ai:bloqueos:${uuid}`);
+    } catch (blacklistError) {
+      console.error('[AI-CLASSIFIER] Error al bloquear IP:', blacklistError.message);
+    }
 
     return res.status(403).json({
       error: 'Petición bloqueada por sistema de seguridad IA',
@@ -298,10 +335,14 @@ async function aiClassifierMiddleware(req, res, next) {
   }
 
   if (classification.clasificacion === RISK_THRESHOLDS.MEDIUM) {
-    // Permitir pero añadir headers de advertencia y registrar
+    // Permitir pero añadir headers de advertencia
     res.setHeader('X-Security-Risk', 'medium');
     res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
-    await metrics.incr(`ai:advertencias:${uuid}`);
+    try {
+      await metrics.incr(`ai:advertencias:${uuid}`);
+    } catch (e) {
+      // Ignorar error de métricas
+    }
   }
 
   // Adjuntar clasificación al request para uso posterior
@@ -321,23 +362,37 @@ async function getAIMetrics() {
   const day = new Date().toISOString().slice(0, 10);
   const { redis } = require('./redis');
   
-  const keys = await redis.keys(`metrics:${day}:ai:*`);
-  const aiMetrics = {};
-  
-  for (const key of keys) {
-    const field = key.replace(`metrics:${day}:`, '');
-    aiMetrics[field] = await redis.get(key);
-  }
-
-  return {
-    day,
-    metrics: aiMetrics,
-    config: {
-      ai_enabled: AI_ENABLED,
-      model: AI_MODEL,
-      timeout_ms: AI_TIMEOUT
+  try {
+    const keys = await redis.keys(`metrics:${day}:ai:*`);
+    const aiMetrics = {};
+    
+    for (const key of keys) {
+      const field = key.replace(`metrics:${day}:`, '');
+      aiMetrics[field] = await redis.get(key);
     }
-  };
+
+    return {
+      day,
+      metrics: aiMetrics,
+      config: {
+        ai_enabled: AI_ENABLED,
+        model: AI_MODEL,
+        timeout_ms: AI_TIMEOUT
+      }
+    };
+  } catch (error) {
+    console.error('[AI-CLASSIFIER] Error obteniendo métricas:', error.message);
+    return {
+      day,
+      metrics: {},
+      error: error.message,
+      config: {
+        ai_enabled: AI_ENABLED,
+        model: AI_MODEL,
+        timeout_ms: AI_TIMEOUT
+      }
+    };
+  }
 }
 
 module.exports = {

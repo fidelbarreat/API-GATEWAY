@@ -1,8 +1,8 @@
-// gateway.js  (versión 3.3 – Redis + blacklist + métricas)
+// gateway.js  (versión 3.4 – Redis + blacklist + métricas + fixes)
 try {
   require('dotenv').config();
 } catch (_e) {
-  // dotenv es opcional; si no está instalado, se usan variables del entorno del sistema.
+  // dotenv es opcional
 }
 
 const express = require('express');
@@ -14,7 +14,7 @@ const path = require('path');
 // Middlewares Redis
 const blacklistMiddleware = require('./blacklist');
 const metricsMiddleware = require('./metrics');
-const { blacklist, metrics: metricsAPI } = require('./redis');
+const { blacklist, metrics: metricsAPI, checkRedisHealth } = require('./redis');
 
 // Clasificador de amenazas con IA
 const { aiClassifierMiddleware, getAIMetrics } = require('./ai-classifier');
@@ -39,7 +39,14 @@ function cargarAPIs() {
 let apisDisponibles = cargarAPIs();
 
 // Health-check propio del gateway
-app.get('/gateway/health', (_req, res) => res.json({ status: 'UP', ts: Date.now() }));
+app.get('/gateway/health', async (_req, res) => {
+  const redisHealth = await checkRedisHealth();
+  res.json({ 
+    status: 'UP', 
+    ts: Date.now(),
+    redis: redisHealth
+  });
+});
 
 // Listar APIs registradas
 app.get('/gateway/apis', (_req, res) => {
@@ -50,36 +57,56 @@ app.get('/gateway/apis', (_req, res) => {
   res.json({ total: lista.length, apis: lista });
 });
 
-// Endpoints Redis
+// Endpoints Redis con manejo de errores
 // Blacklist
 app.get('/gateway/blacklist', async (_req, res) => {
-  const list = await blacklist.list();
-  res.json({ total: list.length, ips: list });
+  try {
+    const list = await blacklist.list();
+    res.json({ total: list.length, ips: list });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener blacklist', message: error.message });
+  }
 });
 
 app.delete('/gateway/blacklist/:ip', async (req, res) => {
-  await blacklist.remove(req.params.ip);
-  res.json({ msg: 'IP desbloqueada', ip: req.params.ip });
+  try {
+    await blacklist.remove(req.params.ip);
+    res.json({ msg: 'IP desbloqueada', ip: req.params.ip });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al desbloquear IP', message: error.message });
+  }
 });
 
 // Métricas
 app.get('/gateway/metrics', async (_req, res) => {
-  const day = new Date().toISOString().slice(0, 10);
-  const data = await metricsAPI.get(day);
-  res.json({ day, metrics: data });
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    const data = await metricsAPI.get(day);
+    res.json({ day, metrics: data });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener métricas', message: error.message });
+  }
 });
 
 app.get('/gateway/metrics/:uuid/latency', async (req, res) => {
-  const day = new Date().toISOString().slice(0, 10);
-  const lat = await metricsAPI.getLatencies(req.params.uuid, day);
-  const avg = lat.length ? (lat.reduce((a, b) => a + b, 0) / lat.length).toFixed(2) : 0;
-  res.json({ uuid: req.params.uuid, day, total: lat.length, avg, latencies: lat });
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    const lat = await metricsAPI.getLatencies(req.params.uuid, day);
+    const avg = lat.length ? (lat.reduce((a, b) => a + b, 0) / lat.length).toFixed(2) : 0;
+    res.json({ uuid: req.params.uuid, day, total: lat.length, avg, latencies: lat });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener latencias', message: error.message });
+  }
 });
 
 // Métricas de IA
 app.get('/gateway/ai/metrics', async (_req, res) => {
-  const aiMetrics = await getAIMetrics();
-  res.json(aiMetrics);
+  try {
+    const aiMetrics = await getAIMetrics();
+    res.json(aiMetrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener métricas de IA', message: error.message });
+  }
 });
 
 // Estado del clasificador IA
@@ -137,12 +164,14 @@ app.use((req, res, next) => {
     changeOrigin: true,
     pathRewrite: () => rutaReal,
     ws: true,
-    onProxyReq: () => {
+    onProxyReq: (proxyReq, req) => {
       console.log(`[PROXY] ${apiConfig.nombre} → ${apiConfig.url}${rutaReal}`);
     },
     onError: (err, _req, res) => {
       console.error(`[ERROR] ${apiConfig.nombre}:`, err.message);
-      res.status(502).json({ error: 'Error en la API destino', api: apiConfig.nombre });
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'Error en la API destino', api: apiConfig.nombre });
+      }
     }
   });
 
@@ -158,9 +187,15 @@ app.use('/', (_req, res) => {
   });
 });
 
+// Manejo de errores global
+app.use((err, _req, res, _next) => {
+  console.error('[EXPRESS] Error no manejado:', err);
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
+
 app.listen(PUERTO, () => {
-  console.log(`\nGateway running on http://localhost:${PUERTO}`);
-  console.log(`Ver APIs: http://localhost:${PUERTO}/gateway/apis\n`);
+  console.log(`\n🚀 Gateway running on http://localhost:${PUERTO}`);
+  console.log(`📋 Ver APIs: http://localhost:${PUERTO}/gateway/apis\n`);
 
   Object.entries(apisDisponibles).forEach(([uuid, info]) => {
     if (info.activa) {
