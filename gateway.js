@@ -8,8 +8,7 @@ try {
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { iniciarMonitorMultiplesAPIs } = require('./monitor');
-const fs = require('fs');
-const path = require('path');
+const { fetchApis } = require('./supabase');
 
 // Middlewares Redis
 const blacklistMiddleware = require('./blacklist');
@@ -20,23 +19,36 @@ const { blacklist, metrics: metricsAPI, checkRedisHealth } = require('./redis');
 const { aiClassifierMiddleware, getAIMetrics } = require('./ai-classifier');
 
 const PUERTO = Number(process.env.PUERTO || process.env.PORT || 3000);
-const DB_PATH = path.join(__dirname, 'db.json');
+const APIS_CACHE_TTL_MS = Number(process.env.APIS_CACHE_TTL_MS || 15000);
 
 const app = express();
 
-// Cargar catálogo de APIs
-function cargarAPIs() {
-  try {
-    const data = fs.readFileSync(DB_PATH, 'utf-8');
-    const db = JSON.parse(data);
-    return db.apis || {};
-  } catch (err) {
-    console.error('Error cargando db.json:', err.message);
-    return {};
-  }
+// Cargar catálogo de APIs desde Supabase
+let apisDisponibles = {};
+let apisCacheTs = 0;
+
+async function cargarAPIs() {
+  return fetchApis();
 }
 
-let apisDisponibles = cargarAPIs();
+async function obtenerAPIsActualizadas() {
+  const ahora = Date.now();
+  if (ahora - apisCacheTs < APIS_CACHE_TTL_MS) return apisDisponibles;
+
+  try {
+    const nuevas = await cargarAPIs();
+    apisDisponibles = nuevas;
+    apisCacheTs = ahora;
+  } catch (err) {
+    console.error('Error cargando APIs desde Supabase:', err.message);
+  }
+
+  return apisDisponibles;
+}
+
+function normalizarUrlDestino(url) {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
 
 // Health-check propio del gateway
 app.get('/gateway/health', async (_req, res) => {
@@ -49,8 +61,9 @@ app.get('/gateway/health', async (_req, res) => {
 });
 
 // Listar APIs registradas
-app.get('/gateway/apis', (_req, res) => {
-  const lista = Object.entries(apisDisponibles).map(([uuid, info]) => ({
+app.get('/gateway/apis', async (_req, res) => {
+  const apis = await obtenerAPIsActualizadas();
+  const lista = Object.entries(apis).map(([uuid, info]) => ({
     uuid,
     ...info
   }));
@@ -118,9 +131,6 @@ app.get('/gateway/ai/status', (_req, res) => {
   });
 });
 
-// Iniciar monitoreo multi-API (health-check + alertas)
-iniciarMonitorMultiplesAPIs(app, apisDisponibles);
-
 // Middleware para parsear JSON (necesario para análisis de body)
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
@@ -129,7 +139,7 @@ app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use('/:uuid', blacklistMiddleware, aiClassifierMiddleware, metricsMiddleware);
 
 // Middleware de extracción de UUID + proxy dinámico
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   // Ignorar rutas internas del gateway
   if (req.originalUrl.startsWith('/gateway')) {
     return next();
@@ -139,7 +149,8 @@ app.use((req, res, next) => {
   if (!match) return next(); // pasará a la ruta por defecto
 
   const [, uuid, rest] = match;
-  const apiConfig = apisDisponibles[uuid];
+  const apis = await obtenerAPIsActualizadas();
+  const apiConfig = apis[uuid];
 
   if (!apiConfig) {
     return res.status(404).json({
@@ -158,14 +169,23 @@ app.use((req, res, next) => {
   }
 
   const rutaReal = `/${rest}`;
+  const destino = normalizarUrlDestino(apiConfig.url);
+
+  if (!destino) {
+    return res.status(502).json({
+      error: 'API destino sin URL configurada',
+      uuid,
+      nombre: apiConfig.nombre
+    });
+  }
 
   const proxy = createProxyMiddleware({
-    target: apiConfig.url,
+    target: destino,
     changeOrigin: true,
     pathRewrite: () => rutaReal,
     ws: true,
     onProxyReq: (proxyReq, req) => {
-      console.log(`[PROXY] ${apiConfig.nombre} → ${apiConfig.url}${rutaReal}`);
+      console.log(`[PROXY] ${apiConfig.nombre} → ${destino}${rutaReal}`);
     },
     onError: (err, _req, res) => {
       console.error(`[ERROR] ${apiConfig.nombre}:`, err.message);
@@ -193,14 +213,28 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Error interno del servidor' });
 });
 
-app.listen(PUERTO, () => {
-  console.log(`\n🚀 Gateway running on http://localhost:${PUERTO}`);
-  console.log(`📋 Ver APIs: http://localhost:${PUERTO}/gateway/apis\n`);
+async function iniciarServidor() {
+  try {
+    apisDisponibles = await cargarAPIs();
+    apisCacheTs = Date.now();
+  } catch (err) {
+    console.error('Error inicial cargando APIs desde Supabase:', err.message);
+  }
 
-  Object.entries(apisDisponibles).forEach(([uuid, info]) => {
-    if (info.activa) {
-      console.log(`  ✓ ${info.nombre} → localhost:${PUERTO}/${uuid}/...`);
-    }
+  // Iniciar monitoreo multi-API (health-check + alertas)
+  iniciarMonitorMultiplesAPIs(app, apisDisponibles);
+
+  app.listen(PUERTO, () => {
+    console.log(`\n🚀 Gateway running on http://localhost:${PUERTO}`);
+    console.log(`📋 Ver APIs: http://localhost:${PUERTO}/gateway/apis\n`);
+
+    Object.entries(apisDisponibles).forEach(([uuid, info]) => {
+      if (info.activa) {
+        console.log(`  ✓ ${info.nombre} → localhost:${PUERTO}/${uuid}/...`);
+      }
+    });
+    console.log('');
   });
-  console.log('');
-});
+}
+
+iniciarServidor();
