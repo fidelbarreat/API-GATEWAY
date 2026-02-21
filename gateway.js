@@ -127,17 +127,58 @@ app.get('/gateway/ai/metrics', async (_req, res) => {
 app.get('/gateway/ai/status', (_req, res) => {
   res.json({
     enabled: process.env.AI_ENABLED !== 'false',
+    mode: 'per-api',
+    niveles_ia_soportados: ['NO', 'BAJO', 'ALTO'],
     model: process.env.AI_MODEL || 'gpt-5-mini',
     api_key_configured: !!process.env.OPENAI_API_KEY
   });
+});
+
+// Filtrado temprano para IPs bloqueadas / DoS (antes de parsear body)
+app.use('/:uuid', blacklistMiddleware);
+
+// Resolver API por UUID antes de IA/proxy para usar configuración por API (nivel_ia)
+app.use('/:uuid', async (req, res, next) => {
+  const uuid = req.params.uuid;
+
+  try {
+    const apis = await obtenerAPIsActualizadas();
+    const apiConfig = apis[uuid];
+
+    if (!apiConfig) {
+      return res.status(404).json({
+        error: 'API no encontrada',
+        uuid,
+        mensaje: 'El UUID proporcionado no corresponde a ninguna API registrada'
+      });
+    }
+
+    if (!apiConfig.activa) {
+      return res.status(403).json({
+        error: 'API desactivada',
+        uuid,
+        nombre: apiConfig.nombre
+      });
+    }
+
+    req.apiConfig = {
+      uuid,
+      ...apiConfig,
+    };
+
+    next();
+  } catch (error) {
+    console.error('[GATEWAY] Error resolviendo API por UUID:', error.message);
+    return res.status(500).json({ error: 'Error resolviendo API destino' });
+  }
 });
 
 // Middleware para parsear JSON (necesario para análisis de body)
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-//  Middlewares antes del proxy: blacklist -> IA classifier -> metrics
-app.use('/:uuid', blacklistMiddleware, aiClassifierMiddleware, metricsMiddleware);
+// Middlewares antes del proxy: IA classifier -> metrics
+app.use('/:uuid', aiClassifierMiddleware, metricsMiddleware);
 
 // Middleware de extracción de UUID + proxy dinámico
 app.use(async (req, res, next) => {
@@ -150,22 +191,12 @@ app.use(async (req, res, next) => {
   if (!match) return next(); // pasará a la ruta por defecto
 
   const [, uuid, rest] = match;
-  const apis = await obtenerAPIsActualizadas();
-  const apiConfig = apis[uuid];
+  const apiConfig = req.apiConfig;
 
   if (!apiConfig) {
-    return res.status(404).json({
-      error: 'API no encontrada',
+    return res.status(500).json({
+      error: 'Configuración de API no disponible',
       uuid,
-      mensaje: 'El UUID proporcionado no corresponde a ninguna API registrada'
-    });
-  }
-
-  if (!apiConfig.activa) {
-    return res.status(403).json({
-      error: 'API desactivada',
-      uuid,
-      nombre: apiConfig.nombre
     });
   }
 

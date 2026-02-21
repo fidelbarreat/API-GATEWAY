@@ -80,6 +80,18 @@ curl -X DELETE localhost:3000/gateway/blacklist/{ip} #Desbloquear IP
 - `GET /gateway/metrics`: Metricas del día (requests, bloqueos, errores)
 - `GET /gateway/metrics/{UUID}/latency`: Latencias (últimas 100)
 
+## Nivel IA por API (`nivel_ia`)
+
+La configuración de IA se define por cada registro en la tabla `apis` con la columna `nivel_ia`.
+
+Valores soportados:
+
+- `NO`: desactiva análisis IA para esa API
+- `BAJO`: IA clasifica y marca warnings, pero no bloquea
+- `ALTO`: IA clasifica y puede bloquear en `riesgo-alto` (comportamiento actual)
+
+Si `nivel_ia` no existe o viene inválido, el gateway usa `BAJO` por defecto.
+
 ## Histórico de peticiones en Supabase
 
 El gateway mantiene un diario local en memoria de cada petición proxied y lo sincroniza en lote a Supabase cada `15s` (configurable).

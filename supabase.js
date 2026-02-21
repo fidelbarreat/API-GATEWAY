@@ -19,9 +19,15 @@ const TAMANO_LOTE_SINCRONIZACION = Number(
 const TABLA_DIARIO_SINCRONIZACION = process.env.SUPABASE_TABLA_DIARIO_SINCRONIZACION
   || process.env.SUPABASE_SYNC_JOURNAL_TABLE
   || 'diario_sincronizacion';
+const NIVELES_IA_VALIDOS = new Set(['NO', 'BAJO', 'ALTO']);
 
 function normalizarUrlDestino(url) {
   return String(url || '').trim().replace(/\/+$/, '');
+}
+
+function normalizarNivelIA(nivel) {
+  const nivelNormalizado = String(nivel || 'BAJO').trim().toUpperCase();
+  return NIVELES_IA_VALIDOS.has(nivelNormalizado) ? nivelNormalizado : 'BAJO';
 }
 
 function mapearApi(row) {
@@ -31,6 +37,7 @@ function mapearApi(row) {
     url: normalizarUrlDestino(row.url),
     descripcion: row.descripcion || null,
     activa: Boolean(row.activo),
+    nivel_ia: normalizarNivelIA(row.nivel_ia),
   };
 }
 
@@ -41,7 +48,7 @@ async function fetchApis() {
 
   const { data, error } = await supabase
     .from('apis')
-    .select('api_id,nombre,url,descripcion,activo');
+    .select('api_id,nombre,url,descripcion,activo,nivel_ia');
 
   if (error) {
     throw new Error(error.message || 'Error consultando Supabase');
@@ -56,6 +63,7 @@ async function fetchApis() {
         url: api.url,
         descripcion: api.descripcion,
         activa: api.activa,
+        nivel_ia: api.nivel_ia,
       };
     }
   });
