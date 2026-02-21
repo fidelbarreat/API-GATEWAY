@@ -9,6 +9,7 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { iniciarMonitorMultiplesAPIs } = require('./monitor');
 const { fetchApis } = require('./supabase');
+const { iniciarRequestHistorySync, detenerRequestHistorySync } = require('./request-history');
 
 // Middlewares Redis
 const blacklistMiddleware = require('./blacklist');
@@ -223,6 +224,7 @@ async function iniciarServidor() {
 
   // Iniciar monitoreo multi-API (health-check + alertas)
   iniciarMonitorMultiplesAPIs(app, apisDisponibles);
+  iniciarRequestHistorySync();
 
   app.listen(PUERTO, () => {
     console.log(`\n🚀 Gateway running on http://localhost:${PUERTO}`);
@@ -236,5 +238,30 @@ async function iniciarServidor() {
     console.log('');
   });
 }
+
+let cerrando = false;
+
+async function apagarGateway(signal) {
+  if (cerrando) return;
+  cerrando = true;
+
+  console.log(`\n[SHUTDOWN] Señal recibida: ${signal}. Sincronizando reportes pendientes...`);
+  await detenerRequestHistorySync();
+  process.exit(0);
+}
+
+process.on('SIGINT', () => {
+  apagarGateway('SIGINT').catch((err) => {
+    console.error('[SHUTDOWN] Error al cerrar:', err.message);
+    process.exit(1);
+  });
+});
+
+process.on('SIGTERM', () => {
+  apagarGateway('SIGTERM').catch((err) => {
+    console.error('[SHUTDOWN] Error al cerrar:', err.message);
+    process.exit(1);
+  });
+});
 
 iniciarServidor();
