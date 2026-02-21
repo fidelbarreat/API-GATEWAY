@@ -167,7 +167,7 @@ function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, A
       const estadoAnterior = estadoMonitor.ultimoEstado;
 
       if (estadoMonitor.fallosConsecutivos >= GOLPES_FALLO) {
-        estadoMonitor.ultimoEstado = 'ABAJO';
+        estadoMonitor.ultimoEstado = 'CAIDO';
       } else if (estadoMonitor.latenciaAltaConsecutiva >= GOLPES_LATENCIA_ALTA) {
         estadoMonitor.ultimoEstado = 'DEGRADADO';
       } else if (estadoMonitor.fallosConsecutivos === 0) {
@@ -179,14 +179,14 @@ function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, A
       if (estadoAnterior !== estadoMonitor.ultimoEstado) {
         const detalle = `API: ${nombre} (${uuid})\nURL: ${url}\nEstado: ${estadoAnterior} → ${estadoMonitor.ultimoEstado}\nLatencia: ${latenciaMs}ms\nTs: ${new Date(ahora).toISOString()}`;
 
-        if (estadoMonitor.ultimoEstado === 'ABAJO') {
-          await enviarAlertaCorreo(`[API-GW] ${nombre} ABAJO`, detalle);
+        if (estadoMonitor.ultimoEstado === 'CAIDO') {
+          await enviarAlertaCorreo(`[API-GW] ${nombre} CAIDO`, detalle);
         } else if (estadoMonitor.ultimoEstado === 'DEGRADADO') {
           await enviarAlertaCorreo(`[API-GW] ${nombre} DEGRADADO`, detalle);
         } else if (
           estadoMonitor.ultimoEstado === 'ARRIBA' &&
           ALERTAR_RECUPERACION &&
-          (estadoAnterior === 'ABAJO' || estadoAnterior === 'DEGRADADO')
+          (estadoAnterior === 'CAIDO' || estadoAnterior === 'DEGRADADO')
         ) {
           await enviarAlertaCorreo(`[API-GW] ${nombre} RECUPERADO`, detalle);
         }
@@ -198,11 +198,11 @@ function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, A
       estadoMonitor.ultimoError = err?.message || String(err);
 
       const estadoAnterior = estadoMonitor.ultimoEstado;
-      estadoMonitor.ultimoEstado = estadoMonitor.fallosConsecutivos >= GOLPES_FALLO ? 'ABAJO' : 'DEGRADADO';
+      estadoMonitor.ultimoEstado = estadoMonitor.fallosConsecutivos >= GOLPES_FALLO ? 'CAIDO' : 'DEGRADADO';
 
-      if (estadoAnterior !== estadoMonitor.ultimoEstado && estadoMonitor.ultimoEstado === 'ABAJO') {
+      if (estadoAnterior !== estadoMonitor.ultimoEstado && estadoMonitor.ultimoEstado === 'CAIDO') {
         const detalle = `API: ${nombre} (${uuid})\nURL: ${url}\nError: ${estadoMonitor.ultimoError}\nTs: ${new Date(ahora).toISOString()}`;
-        await enviarAlertaCorreo(`[API-GW] ${nombre} ABAJO`, detalle);
+        await enviarAlertaCorreo(`[API-GW] ${nombre} CAIDO`, detalle);
       }
     }
   }
@@ -261,7 +261,7 @@ function iniciarMonitorMultiplesAPIs(app, apisConfig = {}) {
       totalAPIs: Object.keys(monitores).length,
       resumen: {
         arriba: 0,
-        abajo: 0,
+        CAIDO: 0,
         degradado: 0,
         desconocido: 0,
       },
