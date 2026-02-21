@@ -16,8 +16,10 @@ Fidel Barreat
 - `gateway.js`: servidor Express + proxies dinámicos
 - `monitor.js`: health-check + alertas SMTP
 - `redis.js`: conexión y helpers Redis
+- `supabase.js`: lectura de APIs + escritura de histórico
 - `blacklist.js`: anti-DoS + TTL auto
 - `metrics.js`: contadores y latencias
+- `request-history.js`: buffer en memoria + sincronización por lotes a Supabase
 - `test-healthcheck.js`: simulador de escenarios (puerto 9999)
 - `db.json`: catalogo de APIs (UUID, URL, activa)
 
@@ -77,6 +79,43 @@ curl -X DELETE localhost:3000/gateway/blacklist/{ip} #Desbloquear IP
 - `DELETE /gateway/blacklist/{ip}`: Desbloquear IP
 - `GET /gateway/metrics`: Metricas del día (requests, bloqueos, errores)
 - `GET /gateway/metrics/{UUID}/latency`: Latencias (últimas 100)
+
+## Nivel IA por API (`nivel_ia`)
+
+La configuración de IA se define por cada registro en la tabla `apis` con la columna `nivel_ia`.
+
+Valores soportados:
+
+- `NO`: desactiva análisis IA para esa API
+- `BAJO`: IA clasifica y marca warnings, pero no bloquea
+- `ALTO`: IA clasifica y puede bloquear en `riesgo-alto` (comportamiento actual)
+
+Si `nivel_ia` no existe o viene inválido, el gateway usa `BAJO` por defecto.
+
+## Histórico de peticiones en Supabase
+
+El gateway mantiene un diario local en memoria de cada petición proxied y lo sincroniza en lote a Supabase cada `15s` (configurable).
+
+### Tablas
+
+Ejecuta el script SQL en Supabase SQL Editor:
+
+- `supabase_request_history.sql`
+
+Este script crea:
+
+- `historial_peticiones`: histórico de peticiones (método, ruta, latencia, estado, IP, clasificación IA)
+- `diario_sincronizacion`: historial de cada sincronización (éxito/error y cantidad de registros)
+
+### Variables de entorno (histórico)
+
+- `SUPABASE_TABLA_HISTORIAL_PETICIONES` (default: `historial_peticiones`)
+- `SUPABASE_TABLA_DIARIO_SINCRONIZACION` (default: `diario_sincronizacion`)
+- `INTERVALO_SINCRONIZACION_MS` (default: `15000`)
+- `MAX_BUFFER_PETICIONES` (default: `10000`)
+- `TAMANO_LOTE_SINCRONIZACION` (default: `500`)
+
+Compatibilidad: también se aceptan los nombres anteriores en inglés (`SUPABASE_REQUEST_LOGS_TABLE`, `SUPABASE_SYNC_JOURNAL_TABLE`, `REQUEST_SYNC_INTERVAL_MS`, `REQUEST_BUFFER_MAX`, `REQUEST_LOGS_BATCH_SIZE`).
 
 ## Health-check externo (backend) + alertas por correo
 

@@ -8,6 +8,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const AI_MODEL = process.env.AI_MODEL || 'gpt-5-mini';
 const AI_ENABLED = process.env.AI_ENABLED !== 'false';
 const AI_TIMEOUT = Number(process.env.AI_TIMEOUT || 5000);
+const NIVELES_IA_VALIDOS = new Set(['NO', 'BAJO', 'ALTO']);
 
 // Umbrales de riesgo
 const RISK_THRESHOLDS = {
@@ -48,6 +49,11 @@ const SCRAPING_INDICATORS = {
 // Recursos estáticos que nunca deben analizarse
 const STATIC_EXTENSIONS = /\.(ico|png|jpg|jpeg|gif|css|js|svg|woff|woff2|ttf|eot|map|json|xml)$/i;
 const STATIC_PATHS = /^\/(favicon\.ico|robots\.txt|sitemap\.xml|health|ping|\.well-known\/.*)$/i;
+
+function normalizarNivelIA(nivel) {
+  const nivelNormalizado = String(nivel || 'BAJO').trim().toUpperCase();
+  return NIVELES_IA_VALIDOS.has(nivelNormalizado) ? nivelNormalizado : 'BAJO';
+}
 
 /**
  * Analiza una petición de forma rápida sin IA (heurísticas)
@@ -145,30 +151,46 @@ async function classifyWithLLM(requestData) {
 
   const { url, method, headers, body, ip, queryParams } = requestData;
 
-  const prompt = `Eres un sistema de seguridad de API Gateway. Analiza la siguiente petición HTTP y clasifícala.
+  const bodyString = JSON.stringify(body || {});
+  const finalBody = bodyString.length > 1000 
+      ? `${bodyString.substring(0, 1000)}... [CONTENIDO TRUNCADO POR SEGURIDAD]` 
+      : bodyString;
 
-PETICIÓN:
-- IP: ${ip}
-- Método: ${method}
-- URL: ${url}
-- Query Params: ${JSON.stringify(queryParams || {})}
-- Headers relevantes: User-Agent: ${headers?.['user-agent'] || 'N/A'}, Content-Type: ${headers?.['content-type'] || 'N/A'}
-- Body (primeros 500 chars): ${JSON.stringify(body || {}).substring(0, 500)}
+  const instrucciones = `Eres un Analista WAF (Web Application Firewall) experto en ciberseguridad.
+        Tu objetivo es analizar una única petición HTTP y clasificarla según si contiene payloads maliciosos o intenciones de ataque basado en el contenido, headers, método y URL.
 
-AMENAZAS A DETECTAR:
-1. DoS/DDoS: Patrones de denegación de servicio
-2. SQL Injection: Intentos de inyección SQL
-3. XSS: Cross-site scripting
-4. Scraping: Extracción automatizada no autorizada
-5. Path Traversal: Intentos de acceso a archivos del sistema
+        REGLAS ESTRICTAS:
+        1. Responde ÚNICAMENTE con un objeto JSON válido. Cero texto adicional, cero markdown fuera del JSON.
+        2. NO analices ataques volumétricos (DoS/DDoS); asume que las capas anteriores ya los mitigaron. Céntrate en la semántica, el payload y la intención.
 
-RESPONDE SOLO en formato JSON válido:
-{
-  "clasificacion": "riesgo-alto" | "riesgo-medio" | "legitimo",
-  "amenazas_detectadas": ["TIPO_AMENAZA"],
-  "confianza": 0.0-1.0,
-  "razon": "explicación breve"
-}`;
+        CRITERIOS DE RIESGO:
+        - "riesgo-alto": Ataques claros y probados. Ej: Inyección SQL evidente, XSS con payloads ejecutables, Remote Code Execution (RCE), Path Traversal (../etc/passwd), LFI/RFI.
+        - "riesgo-medio": Comportamiento anómalo o herramientas sospechosas. Ej: User-Agents de escáneres (Nmap, Nikto), intentos de scraping, caracteres inusuales en campos comunes, peticiones malformadas.
+        - "legitimo": Tráfico normal, sin firmas maliciosas.
+        
+        FORMATO DE RESPUESTA:
+        {
+          "clasificacion": "riesgo-alto" | "riesgo-medio" | "legitimo",
+          "amenazas_detectadas": ["SQLi", "XSS", "Path Traversal", "Scraping", "RCE", "Anomalia_Headers", "Ninguna"],
+          "confianza": 0.0-1.0,
+          "razon": "Justificación técnica de máximo 20 palabras."
+        }`;
+
+  const prompt = `Analiza la siguiente petición:
+
+  {
+    "ip": "${ip}",
+    "metodo": "${method}",
+    "ruta": "${url}",
+    "query_params": ${JSON.stringify(queryParams || {})},
+    "headers": {
+      "user-agent": "${headers?.['user-agent'] || 'N/A'}",
+      "content-type": "${headers?.['content-type'] || 'N/A'}",
+      "host": "${headers?.['host'] || 'N/A'}"
+    },
+    "body_preview": "${finalBody}"
+  }
+  `;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -179,7 +201,7 @@ RESPONDE SOLO en formato JSON válido:
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [
-        { role: 'system', content: 'Eres un experto en ciberseguridad. Responde SOLO en JSON válido.' },
+        { role: 'system', content: instrucciones },
         { role: 'user', content: prompt }
       ],
       max_completion_tokens: 200
@@ -212,6 +234,9 @@ async function aiClassifierMiddleware(req, res, next) {
   const startTime = Date.now();
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
   const uuid = req.params?.uuid || 'global';
+  const nivelIAApi = normalizarNivelIA(req.apiConfig?.nivel_ia);
+  const nivelIAEfectivo = AI_ENABLED ? nivelIAApi : 'NO';
+  const permiteBloqueo = nivelIAEfectivo === 'ALTO';
 
   // Preparar datos de la petición
   const requestData = {
@@ -233,8 +258,20 @@ async function aiClassifierMiddleware(req, res, next) {
     amenazas_detectadas: [],
     confianza: 1.0,
     razon: 'Sin análisis',
-    metodo: 'none'
+    metodo: 'none',
+    nivel_ia: nivelIAEfectivo,
   };
+
+  if (nivelIAEfectivo === 'NO') {
+    req.aiClassification = {
+      ...classification,
+      metodo: 'disabled-by-api',
+      razon: 'IA deshabilitada para esta API',
+      timestamp: new Date().toISOString(),
+      latencyMs: Date.now() - startTime,
+    };
+    return next();
+  }
 
   try {
     // Paso 1: Análisis rápido (heurísticas)
@@ -300,6 +337,7 @@ async function aiClassifierMiddleware(req, res, next) {
   try {
     await metrics.incr(`ai:clasificaciones:${classification.clasificacion}`);
     await metrics.incr(`ai:metodo:${classification.metodo}`);
+    await metrics.incr(`ai:nivel:${nivelIAEfectivo}`);
     if (classification.amenazas_detectadas?.length > 0) {
       for (const threat of classification.amenazas_detectadas) {
         await metrics.incr(`ai:amenaza:${threat}`);
@@ -313,7 +351,7 @@ async function aiClassifierMiddleware(req, res, next) {
   console.log(`[AI-CLASSIFIER] IP:${ip} | ${classification.clasificacion} | ${latencyMs}ms | ${classification.metodo} | ${(classification.razon || 'Sin razón').substring(0, 50)}`);
 
   // Ejecutar acción según clasificación
-  if (classification.clasificacion === RISK_THRESHOLDS.HIGH) {
+  if (classification.clasificacion === RISK_THRESHOLDS.HIGH && permiteBloqueo) {
     // Bloquear IP y añadir a lista negra
     const ttl = Number(process.env.BLACKLIST_TTL_AI || 3600);
     try {
@@ -334,10 +372,14 @@ async function aiClassifierMiddleware(req, res, next) {
     });
   }
 
-  if (classification.clasificacion === RISK_THRESHOLDS.MEDIUM) {
+  if (
+    classification.clasificacion === RISK_THRESHOLDS.MEDIUM
+    || (classification.clasificacion === RISK_THRESHOLDS.HIGH && !permiteBloqueo)
+  ) {
     // Permitir pero añadir headers de advertencia
-    res.setHeader('X-Security-Risk', 'medium');
+    res.setHeader('X-Security-Risk', classification.clasificacion === RISK_THRESHOLDS.HIGH ? 'high' : 'medium');
     res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+    res.setHeader('X-Security-IA-Level', nivelIAEfectivo);
     try {
       await metrics.incr(`ai:advertencias:${uuid}`);
     } catch (e) {
@@ -348,6 +390,7 @@ async function aiClassifierMiddleware(req, res, next) {
   // Adjuntar clasificación al request para uso posterior
   req.aiClassification = {
     ...classification,
+    nivel_ia: nivelIAEfectivo,
     latencyMs,
     timestamp: new Date().toISOString()
   };
@@ -375,7 +418,9 @@ async function getAIMetrics() {
       day,
       metrics: aiMetrics,
       config: {
-        ai_enabled: AI_ENABLED,
+        ai_enabled_global: AI_ENABLED,
+        modo: 'por-api',
+        niveles_soportados: ['NO', 'BAJO', 'ALTO'],
         model: AI_MODEL,
         timeout_ms: AI_TIMEOUT
       }
@@ -387,7 +432,9 @@ async function getAIMetrics() {
       metrics: {},
       error: error.message,
       config: {
-        ai_enabled: AI_ENABLED,
+        ai_enabled_global: AI_ENABLED,
+        modo: 'por-api',
+        niveles_soportados: ['NO', 'BAJO', 'ALTO'],
         model: AI_MODEL,
         timeout_ms: AI_TIMEOUT
       }
