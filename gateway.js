@@ -19,7 +19,8 @@ const { blacklist, metrics: metricsAPI, checkRedisHealth } = require('./redis');
 // Clasificador de amenazas con IA
 const { aiClassifierMiddleware, getAIMetrics } = require('./ai-classifier');
 
-const PUERTO = Number(process.env.PUERTO || process.env.PORT || 3000);
+const PUERTO = Number(process.env.PORT || process.env.PUERTO || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const APIS_CACHE_TTL_MS = Number(process.env.APIS_CACHE_TTL_MS || 15000);
 
 const app = express();
@@ -257,9 +258,9 @@ async function iniciarServidor() {
   iniciarMonitorMultiplesAPIs(app, apisDisponibles);
   iniciarRequestHistorySync();
 
-  app.listen(PUERTO, () => {
-    console.log(`\n🚀 Gateway running on http://localhost:${PUERTO}`);
-    console.log(`📋 Ver APIs: http://localhost:${PUERTO}/gateway/apis\n`);
+  app.listen(PUERTO, HOST, () => {
+    console.log(`\n🚀 Gateway running on http://${HOST}:${PUERTO}`);
+    console.log(`📋 Ver APIs: http://${HOST}:${PUERTO}/gateway/apis\n`);
 
     Object.entries(apisDisponibles).forEach(([uuid, info]) => {
       if (info.activa) {
