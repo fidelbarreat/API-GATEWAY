@@ -269,4 +269,4 @@ async function iniciarServidor() {
     console.log('');
   });
   console.log('');
-});
+};
