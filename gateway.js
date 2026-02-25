@@ -24,6 +24,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const APIS_CACHE_TTL_MS = Number(process.env.APIS_CACHE_TTL_MS || 15000);
 
 const app = express();
+app.set('trust proxy', true);
 
 // Cargar catálogo de APIs desde Supabase
 let apisDisponibles = {};

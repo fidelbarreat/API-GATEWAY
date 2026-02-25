@@ -107,6 +107,18 @@ Este script crea:
 - `historial_peticiones`: histórico de peticiones (método, ruta, latencia, estado, IP, clasificación IA)
 - `diario_sincronizacion`: historial de cada sincronización (éxito/error y cantidad de registros)
 
+Para comparar rendimiento IA vs no IA, ejecuta también:
+
+- `supabase_historial_ia_performance.sql`
+
+Este script agrega en `historial_peticiones`:
+
+- `ia_habilitada`: si la API tenía IA activa (`nivel_ia != NO`)
+- `metodo_ia`: cómo se evaluó (`disabled-by-api`, `static-skip`, `heuristic`, `llm`, etc.)
+- `paso_por_llm`: `true/false` si hubo llamada al LLM
+- `latencia_ia_ms`: tiempo del clasificador IA
+- `nivel_ia`: nivel aplicado en esa petición (`NO`, `BAJO`, `ALTO`)
+
 ### Variables de entorno (histórico)
 
 - `SUPABASE_TABLA_HISTORIAL_PETICIONES` (default: `historial_peticiones`)

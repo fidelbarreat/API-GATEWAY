@@ -36,6 +36,11 @@ function encolarRequestLog(log) {
     clasificacion_ia: log.clasificacion_ia || null,
     amenazas_ia: Array.isArray(log.amenazas_ia) ? log.amenazas_ia : [],
     confianza_ia: typeof log.confianza_ia === 'number' ? log.confianza_ia : null,
+    nivel_ia: log.nivel_ia || null,
+    metodo_ia: log.metodo_ia || null,
+    paso_por_llm: Boolean(log.paso_por_llm),
+    latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : null,
+    ia_habilitada: Boolean(log.ia_habilitada),
   };
 
   bufferPeticiones.push(registroPeticion);

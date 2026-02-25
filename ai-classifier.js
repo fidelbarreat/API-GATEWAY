@@ -2,6 +2,7 @@
 // Integración con OpenAI GPT para detección de DoS/DDoS, inyección SQL y scraping
 
 const { metrics, blacklist } = require('./redis');
+const { obtenerIpCliente } = require('./ip-utils');
 
 // Configuración
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -232,7 +233,7 @@ async function classifyWithLLM(requestData) {
  */
 async function aiClassifierMiddleware(req, res, next) {
   const startTime = Date.now();
-  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const ip = obtenerIpCliente(req);
   const uuid = req.params?.uuid || 'global';
   const nivelIAApi = normalizarNivelIA(req.apiConfig?.nivel_ia);
   const nivelIAEfectivo = AI_ENABLED ? nivelIAApi : 'NO';
@@ -279,6 +280,13 @@ async function aiClassifierMiddleware(req, res, next) {
     
     // Si es recurso estático, saltar todo
     if (quickResult.skipped) {
+      req.aiClassification = {
+        ...classification,
+        metodo: 'static-skip',
+        razon: 'Recurso estático, análisis omitido',
+        timestamp: new Date().toISOString(),
+        latencyMs: Date.now() - startTime,
+      };
       return next();
     }
     
@@ -328,6 +336,11 @@ async function aiClassifierMiddleware(req, res, next) {
     classification.razon = 'Error en clasificación, permitiendo por defecto';
     classification.metodo = 'error-passthrough';
     // En caso de error, permitir pasar (fail-open para no bloquear tráfico legítimo)
+    req.aiClassification = {
+      ...classification,
+      timestamp: new Date().toISOString(),
+      latencyMs: Date.now() - startTime,
+    };
     return next();
   }
 

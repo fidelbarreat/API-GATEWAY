@@ -1,10 +1,11 @@
 // blacklist.js - Middleware de blacklist con manejo de errores robusto
 const { blacklist, metrics, redis } = require('./redis');
+const { obtenerIpCliente } = require('./ip-utils');
 
 const DOS_THRESHOLD = 20; // requests en 1 min => consideramos DoS
 
 async function blacklistMiddleware(req, res, next) {
-  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const ip = obtenerIpCliente(req);
 
   try {
     // Verificar si IP está en blacklist
