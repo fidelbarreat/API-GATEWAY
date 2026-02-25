@@ -128,7 +128,7 @@ app.get('/gateway/ai/metrics', async (_req, res) => {
 // Estado del clasificador IA
 app.get('/gateway/ai/status', (_req, res) => {
   res.json({
-    enabled: process.env.AI_ENABLED !== 'false',
+    enabled: true,
     mode: 'per-api',
     niveles_ia_soportados: ['NO', 'BAJO', 'ALTO'],
     model: process.env.AI_MODEL || 'gpt-5-mini',

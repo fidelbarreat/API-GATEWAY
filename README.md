@@ -92,6 +92,20 @@ Valores soportados:
 
 Si `nivel_ia` no existe o viene inválido, el gateway usa `BAJO` por defecto.
 
+## Heurística por API (`heuristica_activada`)
+
+La tabla `apis` también soporta la columna booleana `heuristica_activada` (default `true`):
+
+- `true`: aplica clasificación/bloqueo heurístico antes de IA.
+- `false`: omite heurística y permite evaluar rendimiento bruto de IA.
+
+Orden de decisión:
+
+1. Si `heuristica_activada=true`, se ejecuta heurística (y puede bloquear en riesgo alto).
+2. Luego se evalúa `nivel_ia`:
+  - `NO`: se conserva resultado de heurística (sin llamar LLM).
+  - `BAJO`/`ALTO`: se llama al LLM y se actúa según clasificación y nivel.
+
 ## Histórico de peticiones en Supabase
 
 El gateway mantiene un diario local en memoria de cada petición proxied y lo sincroniza en lote a Supabase cada `15s` (configurable).

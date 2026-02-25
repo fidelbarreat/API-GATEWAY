@@ -38,6 +38,7 @@ function mapearApi(row) {
     descripcion: row.descripcion || null,
     activa: Boolean(row.activo),
     nivel_ia: normalizarNivelIA(row.nivel_ia),
+    heuristica_activada: row.heuristica_activada !== false,
   };
 }
 
@@ -48,7 +49,7 @@ async function fetchApis() {
 
   const { data, error } = await supabase
     .from('apis')
-    .select('api_id,nombre,url,descripcion,activo,nivel_ia');
+    .select('api_id,nombre,url,descripcion,activo,nivel_ia,heuristica_activada');
 
   if (error) {
     throw new Error(error.message || 'Error consultando Supabase');
@@ -64,6 +65,7 @@ async function fetchApis() {
         descripcion: api.descripcion,
         activa: api.activa,
         nivel_ia: api.nivel_ia,
+        heuristica_activada: api.heuristica_activada,
       };
     }
   });
@@ -87,6 +89,7 @@ function mapearRegistroPeticion(log) {
     amenazas_ia: Array.isArray(log.amenazas_ia) ? log.amenazas_ia : [],
     confianza_ia: typeof log.confianza_ia === 'number' ? log.confianza_ia : null,
     nivel_ia: log.nivel_ia || null,
+    heuristica_activada: typeof log.heuristica_activada === 'boolean' ? log.heuristica_activada : null,
     metodo_ia: log.metodo_ia || null,
     paso_por_llm: Boolean(log.paso_por_llm),
     latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : null,
