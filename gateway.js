@@ -270,4 +270,31 @@ async function iniciarServidor() {
     console.log('');
   });
   console.log('');
-};
+}
+
+let cerrando = false;
+
+async function apagarGateway(signal) {
+  if (cerrando) return;
+  cerrando = true;
+
+  console.log(`\n[SHUTDOWN] Señal recibida: ${signal}. Sincronizando reportes pendientes...`);
+  await detenerRequestHistorySync();
+  process.exit(0);
+}
+
+process.on('SIGINT', () => {
+  apagarGateway('SIGINT').catch((err) => {
+    console.error('[SHUTDOWN] Error al cerrar:', err.message);
+    process.exit(1);
+  });
+});
+
+process.on('SIGTERM', () => {
+  apagarGateway('SIGTERM').catch((err) => {
+    console.error('[SHUTDOWN] Error al cerrar:', err.message);
+    process.exit(1);
+  });
+});
+
+iniciarServidor();
