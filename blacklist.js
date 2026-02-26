@@ -1,6 +1,7 @@
 // blacklist.js - Middleware de blacklist con manejo de errores robusto
 const { blacklist, metrics, redis } = require('./redis');
 const { obtenerIpCliente } = require('./ip-utils');
+const { enviarAlertaSeguridad } = require('./monitor');
 
 const DOS_THRESHOLD = 20; // requests en 1 min => consideramos DoS
 
@@ -48,6 +49,23 @@ async function blacklistMiddleware(req, res, next) {
       } catch (blockError) {
         console.error('[BLACKLIST] Error bloqueando IP por DoS:', blockError.message);
       }
+
+      enviarAlertaSeguridad({
+        tipo: 'DDOS',
+        nivel: 'ALTO',
+        origen: 'blacklist-middleware',
+        accion: 'bloqueada',
+        uuid: req.params?.uuid || 'global',
+        apiNombre: req.apiConfig?.nombre || 'API desconocida',
+        ip,
+        metodo: req.method,
+        ruta: req.originalUrl || req.url,
+        amenazas: ['DOS_DETECTADO'],
+        evidencia: `Frecuencia por IP superior al umbral de ${DOS_THRESHOLD} req/min. Conteo actual: ${current}`,
+        ts: Date.now(),
+      }).catch((alertError) => {
+        console.error('[BLACKLIST] Error enviando alerta de seguridad:', alertError.message);
+      });
       
       return res.status(429).json({
         error: 'Posible ataque DoS detectado',

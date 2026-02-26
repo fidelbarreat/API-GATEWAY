@@ -20,7 +20,7 @@ Fidel Barreat
 - `blacklist.js`: anti-DoS + TTL auto
 - `metrics.js`: contadores y latencias
 - `request-history.js`: buffer en memoria + sincronización por lotes a Supabase
-- `test-healthcheck.js`: simulador de escenarios (puerto 9999)
+- `test-healthcheck.js`: simulador de escenarios (puerto 9999) y batería de ataques contra gateway
 - `db.json`: catalogo de APIs (UUID, URL, activa)
 
 ## Ejecutar
@@ -43,7 +43,18 @@ node test-healthcheck.js
 npm start
 ```
 
-4) Acciones (terminal 3):
+4) Simular ataques (terminal 3, opcional):
+
+```bash
+node test-healthcheck.js ataques
+```
+
+Variables opcionales para la simulación:
+
+- `TEST_GATEWAY_BASE` (default: `http://localhost:3000`)
+- `TEST_UUID` (default: `test-uuid-healthcheck`)
+
+5) Acciones (terminal 4):
 
 ```bash
 curl localhost:3000/gateway/apis #Ver APIs
@@ -171,6 +182,17 @@ El gateway realiza un health-check periódico al backend y puede enviar alertas 
 
 - `ENFRIAMIENTO_ALERTA_MS`: cooldown entre alertas. Default: `600000` (10 min)
 - `ALERTAR_RECUPERACION`: `true/false` para enviar correo al recuperar. Default: `true`
+- `ALERTAS_SEGURIDAD_HABILITADAS`: habilita alertas de seguridad IA/heurística/DoS. Default: `true`
+- `ENFRIAMIENTO_ALERTA_SEGURIDAD_MS`: cooldown por firma de amenaza (IP + tipo + API). Default: `120000` (2 min)
+
+### Alertas de seguridad (IA + heurística + DoS)
+
+Además del health-check, el monitor ahora envía correos cuando se detectan eventos maliciosos como:
+
+- `DDOS` detectado por umbral de frecuencia en `blacklist.js`
+- `SQL_INJECTION`, `XSS`, `SCRAPING`, `ACCESO_ADMIN_SOSPECHOSO` detectados por heurística/IA
+
+Cada alerta incluye IP, UUID de API, ruta, método, amenazas detectadas, acción aplicada y evidencia.
 
 **SMTP (correo)**
 
