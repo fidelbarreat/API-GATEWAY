@@ -452,7 +452,7 @@ async function aiClassifierMiddleware(req, res, next) {
     if (heuristicaActivada) {
       const inicioHeuristica = Date.now();
       quickResult = quickAnalysis(requestData);
-      const latenciaHeuristicaMs = Date.now() - inicioHeuristica;
+      const latenciaHeuristicaMs = Math.max(1, Date.now() - inicioHeuristica);
       classification.heuristicLatencyMs = latenciaHeuristicaMs;
 
       if (quickResult.skipped) {
@@ -499,25 +499,25 @@ async function aiClassifierMiddleware(req, res, next) {
           res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
           classification.metodo = 'heuristic-high-no-block';
           classification.razon = `${classification.razon} | BLOQIP=0, bloqueo omitido`;
-        }
+        } else {
+          const ttl = Number(process.env.BLACKLIST_TTL_AI || 3600);
+          try {
+            await blacklist.add(ip, ttl);
+            await metrics.incr(`ai:bloqueos-heuristica:${uuid}`);
+          } catch (blacklistError) {
+            console.error('[AI-CLASSIFIER] Error al bloquear IP por heurística:', blacklistError.message);
+          }
 
-        const ttl = Number(process.env.BLACKLIST_TTL_AI || 3600);
-        try {
-          await blacklist.add(ip, ttl);
-          await metrics.incr(`ai:bloqueos-heuristica:${uuid}`);
-        } catch (blacklistError) {
-          console.error('[AI-CLASSIFIER] Error al bloquear IP por heurística:', blacklistError.message);
+          return res.status(403).json({
+            error: 'Petición bloqueada por sistema de seguridad heurístico',
+            clasificacion: classification.clasificacion,
+            amenazas: classification.amenazas_detectadas,
+            confianza: classification.confianza,
+            ip,
+            ttl_bloqueo: ttl,
+            mensaje: 'Su IP ha sido bloqueada temporalmente por heurística. Contacte al administrador si cree que es un error.'
+          });
         }
-
-        return res.status(403).json({
-          error: 'Petición bloqueada por sistema de seguridad heurístico',
-          clasificacion: classification.clasificacion,
-          amenazas: classification.amenazas_detectadas,
-          confianza: classification.confianza,
-          ip,
-          ttl_bloqueo: ttl,
-          mensaje: 'Su IP ha sido bloqueada temporalmente por heurística. Contacte al administrador si cree que es un error.'
-        });
       }
     } else {
       classification = {
