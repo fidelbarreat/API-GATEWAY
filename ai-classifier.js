@@ -4,6 +4,7 @@
 const { metrics, blacklist } = require('./redis');
 const { obtenerIpCliente } = require('./ip-utils');
 const { enviarAlertaSeguridad } = require('./monitor');
+const { isIpBlockingEnabled } = require('./supabase');
 
 // Configuración
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -410,10 +411,11 @@ async function aiClassifierMiddleware(req, res, next) {
   const startTime = Date.now();
   const ip = obtenerIpCliente(req);
   const uuid = req.params?.uuid || 'global';
+  const bloqueoIpActivo = await isIpBlockingEnabled();
   const nivelIAApi = normalizarNivelIA(req.apiConfig?.nivel_ia);
   const nivelIAEfectivo = nivelIAApi;
   const heuristicaActivada = req.apiConfig?.heuristica_activada !== false;
-  const permiteBloqueo = nivelIAEfectivo === 'ALTO';
+  const permiteBloqueo = nivelIAEfectivo === 'ALTO' && bloqueoIpActivo;
 
   // Preparar datos de la petición
   const requestData = {
@@ -482,8 +484,22 @@ async function aiClassifierMiddleware(req, res, next) {
       if (classification.clasificacion === RISK_THRESHOLDS.HIGH) {
         notificarAlertaSeguridadDesdeClasificacion(req, classification, {
           origen: 'heuristica',
-          accion: 'bloqueada',
+          accion: bloqueoIpActivo ? 'bloqueada' : 'simulada-no-bloqueada',
         });
+
+        if (!bloqueoIpActivo) {
+          try {
+            await metrics.incr(`ai:bloqueos-heuristica-omitidos:${uuid}`);
+          } catch (_e) {
+            // Ignorar error de métricas
+          }
+
+          res.setHeader('X-Security-Risk', 'high');
+          res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+          res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
+          classification.metodo = 'heuristic-high-no-block';
+          classification.razon = `${classification.razon} | BLOQIP=0, bloqueo omitido`;
+        }
 
         const ttl = Number(process.env.BLACKLIST_TTL_AI || 3600);
         try {
@@ -627,13 +643,28 @@ async function aiClassifierMiddleware(req, res, next) {
     });
   }
 
-  if (
-    classification.clasificacion === RISK_THRESHOLDS.MEDIUM
-    || (classification.clasificacion === RISK_THRESHOLDS.HIGH && !permiteBloqueo)
-  ) {
+  if (classification.clasificacion === RISK_THRESHOLDS.HIGH && !permiteBloqueo) {
     notificarAlertaSeguridadDesdeClasificacion(req, classification, {
       origen: classification.metodo || 'llm',
-      accion: classification.clasificacion === RISK_THRESHOLDS.HIGH ? 'warning-alto-sin-bloqueo' : 'warning',
+      accion: 'simulada-no-bloqueada',
+    });
+
+    try {
+      await metrics.incr(`ai:bloqueos-omitidos:${uuid}`);
+    } catch (_e) {
+      // Ignorar error de métricas
+    }
+
+    res.setHeader('X-Security-Risk', 'high');
+    res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+    res.setHeader('X-Security-IA-Level', nivelIAEfectivo);
+    res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
+  }
+
+  if (classification.clasificacion === RISK_THRESHOLDS.MEDIUM) {
+    notificarAlertaSeguridadDesdeClasificacion(req, classification, {
+      origen: classification.metodo || 'llm',
+      accion: 'warning',
     });
 
     // Permitir pero añadir headers de advertencia

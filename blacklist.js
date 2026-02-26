@@ -2,15 +2,17 @@
 const { blacklist, metrics, redis } = require('./redis');
 const { obtenerIpCliente } = require('./ip-utils');
 const { enviarAlertaSeguridad } = require('./monitor');
+const { isIpBlockingEnabled } = require('./supabase');
 
 const DOS_THRESHOLD = 20; // requests en 1 min => consideramos DoS
 
 async function blacklistMiddleware(req, res, next) {
   const ip = obtenerIpCliente(req);
+  const bloqueoIpActivo = await isIpBlockingEnabled();
 
   try {
-    // Verificar si IP está en blacklist
-    const isBlocked = await blacklist.exists(ip);
+    // Verificar si IP está en blacklist (si BLOQIP está activo)
+    const isBlocked = bloqueoIpActivo ? await blacklist.exists(ip) : false;
 
     if (isBlocked) {
       try {
@@ -43,18 +45,26 @@ async function blacklistMiddleware(req, res, next) {
 
     if (current > DOS_THRESHOLD) {
       const ttl = Number(process.env.BLACKLIST_TTL_DOS || 3600);
-      try {
-        await blacklist.add(ip, ttl);
-        await metrics.incr(`dos_detectado:${req.params?.uuid || 'global'}`);
-      } catch (blockError) {
-        console.error('[BLACKLIST] Error bloqueando IP por DoS:', blockError.message);
+      if (bloqueoIpActivo) {
+        try {
+          await blacklist.add(ip, ttl);
+          await metrics.incr(`dos_detectado:${req.params?.uuid || 'global'}`);
+        } catch (blockError) {
+          console.error('[BLACKLIST] Error bloqueando IP por DoS:', blockError.message);
+        }
+      } else {
+        try {
+          await metrics.incr(`dos_detectado_no_bloqueado:${req.params?.uuid || 'global'}`);
+        } catch (_metricsError) {
+          // Ignorar error de métricas
+        }
       }
 
       enviarAlertaSeguridad({
         tipo: 'DDOS',
         nivel: 'ALTO',
         origen: 'blacklist-middleware',
-        accion: 'bloqueada',
+        accion: bloqueoIpActivo ? 'bloqueada' : 'simulada-no-bloqueada',
         uuid: req.params?.uuid || 'global',
         apiNombre: req.apiConfig?.nombre || 'API desconocida',
         emailDestino: req.apiConfig?.email_notificacion || null,
@@ -67,6 +77,12 @@ async function blacklistMiddleware(req, res, next) {
       }).catch((alertError) => {
         console.error('[BLACKLIST] Error enviando alerta de seguridad:', alertError.message);
       });
+
+      if (!bloqueoIpActivo) {
+        res.setHeader('X-Security-Would-Block', 'dos');
+        res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
+        return next();
+      }
       
       return res.status(429).json({
         error: 'Posible ataque DoS detectado',

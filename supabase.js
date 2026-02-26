@@ -19,7 +19,11 @@ const TAMANO_LOTE_SINCRONIZACION = Number(
 const TABLA_DIARIO_SINCRONIZACION = process.env.SUPABASE_TABLA_DIARIO_SINCRONIZACION
   || process.env.SUPABASE_SYNC_JOURNAL_TABLE
   || 'diario_sincronizacion';
+const TABLA_CONFIGURACION = process.env.SUPABASE_TABLA_CONFIGURACION || 'configuracion';
 const NIVELES_IA_VALIDOS = new Set(['NO', 'BAJO', 'ALTO']);
+const CONFIG_CACHE_TTL_MS = Number(process.env.CONFIG_CACHE_TTL_MS || 10_000);
+
+const cacheConfiguracion = new Map();
 
 function normalizarUrlDestino(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -153,4 +157,49 @@ async function insertarDiarioSincronizacion(entrada) {
   }
 }
 
-module.exports = { fetchApis, insertarRegistrosPeticiones, insertarDiarioSincronizacion };
+async function obtenerValorConfiguracion(atributo) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error('SUPABASE_URL o SUPABASE_KEY no configuradas');
+  }
+
+  const clave = String(atributo || '').trim().toUpperCase();
+  if (!clave) return null;
+
+  const ahora = Date.now();
+  const cache = cacheConfiguracion.get(clave);
+  if (cache && ahora - cache.ts < CONFIG_CACHE_TTL_MS) {
+    return cache.valor;
+  }
+
+  const { data, error } = await supabase
+    .from(TABLA_CONFIGURACION)
+    .select('atributo,valor')
+    .eq('atributo', clave)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || `Error consultando configuración (${clave})`);
+  }
+
+  const valor = data?.valor ?? null;
+  cacheConfiguracion.set(clave, { valor, ts: ahora });
+  return valor;
+}
+
+async function isIpBlockingEnabled() {
+  try {
+    const valor = await obtenerValorConfiguracion('BLOQIP');
+    return String(valor ?? '1').trim() !== '0';
+  } catch (error) {
+    console.error('[SUPABASE] Error leyendo BLOQIP, se mantiene bloqueo activo por seguridad:', error.message);
+    return true;
+  }
+}
+
+module.exports = {
+  fetchApis,
+  insertarRegistrosPeticiones,
+  insertarDiarioSincronizacion,
+  obtenerValorConfiguracion,
+  isIpBlockingEnabled,
+};

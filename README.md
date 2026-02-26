@@ -168,6 +168,17 @@ Para crear la columna en Supabase:
 
 - `supabase_add_email_notificacion.sql`
 
+## Configuración dinámica de bloqueo IP (`configuracion.BLOQIP`)
+
+La tabla `configuracion` permite activar/desactivar bloqueo real de IP sin redeploy:
+
+- `atributo='BLOQIP'`, `valor='1'`: comportamiento normal (bloquea IP por DoS/IA).
+- `atributo='BLOQIP'`, `valor='0'`: no bloquea IP, pero registra y alerta eventos como `simulada-no-bloqueada`.
+
+Script SQL sugerido:
+
+- `supabase_configuracion_bloqip.sql`
+
 ## Histórico de peticiones en Supabase
 
 El gateway mantiene un diario local en memoria de cada petición proxied y lo sincroniza en lote a Supabase cada `15s` (configurable).
