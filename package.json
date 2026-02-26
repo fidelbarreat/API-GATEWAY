@@ -5,6 +5,7 @@
   "main": "gateway.js",
   "scripts": {
     "start": "node gateway.js",
+    "repeat:get": "node repeat-get.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

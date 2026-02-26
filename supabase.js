@@ -31,6 +31,8 @@ function normalizarNivelIA(nivel) {
 }
 
 function mapearApi(row) {
+  const emailNotificacion = String(row.email_notificacion || '').trim();
+
   return {
     uuid: row.api_id,
     nombre: row.nombre,
@@ -39,6 +41,7 @@ function mapearApi(row) {
     activa: Boolean(row.activo),
     nivel_ia: normalizarNivelIA(row.nivel_ia),
     heuristica_activada: row.heuristica_activada !== false,
+    email_notificacion: emailNotificacion || null,
   };
 }
 
@@ -49,7 +52,7 @@ async function fetchApis() {
 
   const { data, error } = await supabase
     .from('apis')
-    .select('api_id,nombre,url,descripcion,activo,nivel_ia,heuristica_activada');
+    .select('api_id,nombre,url,descripcion,activo,nivel_ia,heuristica_activada,email_notificacion');
 
   if (error) {
     throw new Error(error.message || 'Error consultando Supabase');
@@ -66,6 +69,7 @@ async function fetchApis() {
         activa: api.activa,
         nivel_ia: api.nivel_ia,
         heuristica_activada: api.heuristica_activada,
+        email_notificacion: api.email_notificacion,
       };
     }
   });
@@ -92,8 +96,8 @@ function mapearRegistroPeticion(log) {
     heuristica_activada: typeof log.heuristica_activada === 'boolean' ? log.heuristica_activada : null,
     metodo_ia: log.metodo_ia || null,
     paso_por_llm: Boolean(log.paso_por_llm),
-    latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : null,
-    ia_habilitada: Boolean(log.ia_habilitada),
+    latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : 0,
+    latencia_heuristica_ms: typeof log.latencia_heuristica_ms === 'number' ? log.latencia_heuristica_ms : 0,
   };
 }
 

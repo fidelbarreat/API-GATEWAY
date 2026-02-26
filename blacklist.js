@@ -57,6 +57,7 @@ async function blacklistMiddleware(req, res, next) {
         accion: 'bloqueada',
         uuid: req.params?.uuid || 'global',
         apiNombre: req.apiConfig?.nombre || 'API desconocida',
+        emailDestino: req.apiConfig?.email_notificacion || null,
         ip,
         metodo: req.method,
         ruta: req.originalUrl || req.url,

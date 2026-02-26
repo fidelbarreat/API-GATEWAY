@@ -81,9 +81,17 @@ async function requestWithTimeout(url, options = {}, timeoutMs = 10_000) {
 }
 
 async function simularAtaques() {
+  const targetBaseEnv = process.env.TEST_TARGET_BASE;
   const gatewayBase = (process.env.TEST_GATEWAY_BASE || 'http://localhost:3000').replace(/\/$/, '');
-  const uuid = process.env.TEST_UUID || 'test-uuid-healthcheck';
-  const target = (path) => `${gatewayBase}/${uuid}${path}`;
+  const uuidCompat = process.env.TEST_UUID;
+
+  const targetBase = targetBaseEnv
+    ? String(targetBaseEnv).replace(/\/$/, '')
+    : (uuidCompat
+      ? `${gatewayBase}/${uuidCompat}`.replace(/\/$/, '')
+      : gatewayBase);
+
+  const target = (path) => `${targetBase}${path}`;
 
   const escenarios = [
     {
@@ -149,8 +157,10 @@ async function simularAtaques() {
   ];
 
   console.log('[ATAQUES] Iniciando batería de simulación...');
-  console.log(`[ATAQUES] Gateway: ${gatewayBase}`);
-  console.log(`[ATAQUES] UUID: ${uuid}`);
+  console.log(`[ATAQUES] Target base: ${targetBase}`);
+  if (!targetBaseEnv && !uuidCompat) {
+    console.log('[ATAQUES] Nota: sin TEST_TARGET_BASE ni TEST_UUID, se usará raíz del gateway.');
+  }
 
   for (const escenario of escenarios) {
     const resultado = await requestWithTimeout(target(escenario.path), escenario.options);

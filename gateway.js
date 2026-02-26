@@ -136,10 +136,7 @@ app.get('/gateway/ai/status', (_req, res) => {
   });
 });
 
-// Filtrado temprano para IPs bloqueadas / DoS (antes de parsear body)
-app.use('/:uuid', blacklistMiddleware);
-
-// Resolver API por UUID antes de IA/proxy para usar configuración por API (nivel_ia)
+// Resolver API por UUID antes de middlewares de seguridad/proxy para usar configuración por API
 app.use('/:uuid', async (req, res, next) => {
   const uuid = req.params.uuid;
 
@@ -174,6 +171,9 @@ app.use('/:uuid', async (req, res, next) => {
     return res.status(500).json({ error: 'Error resolviendo API destino' });
   }
 });
+
+// Filtrado temprano para IPs bloqueadas / DoS (antes de parsear body)
+app.use('/:uuid', blacklistMiddleware);
 
 // Middleware para parsear JSON (necesario para análisis de body)
 app.use(express.json({ limit: '10kb' }));

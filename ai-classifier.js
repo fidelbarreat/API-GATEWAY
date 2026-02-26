@@ -114,6 +114,7 @@ function notificarAlertaSeguridadDesdeClasificacion(req, classification, meta = 
 
   const uuid = req.params?.uuid || req.apiConfig?.uuid || 'global';
   const apiNombre = req.apiConfig?.nombre || 'API desconocida';
+  const emailDestino = req.apiConfig?.email_notificacion || null;
   const ip = obtenerIpCliente(req);
 
   let tipo = 'PETICION_SOSPECHOSA';
@@ -131,6 +132,7 @@ function notificarAlertaSeguridadDesdeClasificacion(req, classification, meta = 
     accion: meta.accion || 'permitida',
     uuid,
     apiNombre,
+    emailDestino,
     ip,
     metodo: req.method,
     ruta: req.originalUrl || req.url,
@@ -289,16 +291,23 @@ async function classifyWithLLM(requestData) {
     max_completion_tokens: 200,
   };
 
+  let latenciaSolicitudesLLMMs = 0;
+
   async function solicitarChat(payload) {
-    return fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(AI_TIMEOUT)
-    });
+    const inicio = Date.now();
+    try {
+      return await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(AI_TIMEOUT)
+      });
+    } finally {
+      latenciaSolicitudesLLMMs += Date.now() - inicio;
+    }
   }
 
   let response = await solicitarChat({
@@ -343,7 +352,9 @@ async function classifyWithLLM(requestData) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    const openAIError = new Error(`OpenAI API error: ${response.status} - ${error}`);
+    openAIError.llmLatencyMs = latenciaSolicitudesLLMMs;
+    throw openAIError;
   }
 
   const data = await response.json();
@@ -353,7 +364,9 @@ async function classifyWithLLM(requestData) {
     : (message?.content || '{}');
 
   if (!content || typeof content !== 'string') {
-    throw new Error('Respuesta del LLM vacía o inválida');
+    const llmContentError = new Error('Respuesta del LLM vacía o inválida');
+    llmContentError.llmLatencyMs = latenciaSolicitudesLLMMs;
+    throw llmContentError;
   }
 
   let parsed;
@@ -362,12 +375,17 @@ async function classifyWithLLM(requestData) {
   } catch (_e) {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('Respuesta del LLM no contiene JSON válido');
+      const llmJsonError = new Error('Respuesta del LLM no contiene JSON válido');
+      llmJsonError.llmLatencyMs = latenciaSolicitudesLLMMs;
+      throw llmJsonError;
     }
     parsed = JSON.parse(jsonMatch[0]);
   }
 
-  return normalizarResultadoLLM(parsed);
+  return {
+    ...normalizarResultadoLLM(parsed),
+    llmLatencyMs: latenciaSolicitudesLLMMs,
+  };
 }
 
 /**
@@ -406,13 +424,19 @@ async function aiClassifierMiddleware(req, res, next) {
     metodo: 'none',
     nivel_ia: nivelIAEfectivo,
     heuristica_activada: heuristicaActivada,
+    llmLatencyMs: 0,
+    heuristicLatencyMs: 0,
+    paso_por_llm: false,
   };
 
   try {
     // Paso 1: Análisis heurístico (solo si está activado por API)
     let quickResult = null;
     if (heuristicaActivada) {
+      const inicioHeuristica = Date.now();
       quickResult = quickAnalysis(requestData);
+      const latenciaHeuristicaMs = Date.now() - inicioHeuristica;
+      classification.heuristicLatencyMs = latenciaHeuristicaMs;
 
       if (quickResult.skipped) {
         req.aiClassification = {
@@ -421,6 +445,9 @@ async function aiClassifierMiddleware(req, res, next) {
           razon: 'Recurso estático, análisis omitido',
           timestamp: new Date().toISOString(),
           latencyMs: Date.now() - startTime,
+          llmLatencyMs: 0,
+          heuristicLatencyMs: latenciaHeuristicaMs,
+          paso_por_llm: false,
         };
         return next();
       }
@@ -434,6 +461,7 @@ async function aiClassifierMiddleware(req, res, next) {
           ? 'Sin indicadores de amenaza por heurística'
           : `Detectado por heurísticas: ${quickResult.threats.join(', ')}`,
         metodo: quickResult.quickClassification === RISK_THRESHOLDS.LOW ? 'heuristic-clean' : 'heuristic',
+        heuristicLatencyMs: latenciaHeuristicaMs,
       };
 
       if (classification.clasificacion === RISK_THRESHOLDS.HIGH) {
@@ -485,6 +513,9 @@ async function aiClassifierMiddleware(req, res, next) {
         razon: `${classification.razon} (nivel_ia=NO)`,
         timestamp: new Date().toISOString(),
         latencyMs: Date.now() - startTime,
+        llmLatencyMs: 0,
+        heuristicLatencyMs: typeof classification.heuristicLatencyMs === 'number' ? classification.heuristicLatencyMs : 0,
+        paso_por_llm: false,
       };
       return next();
     }
@@ -497,6 +528,8 @@ async function aiClassifierMiddleware(req, res, next) {
           ...classification,
           ...llmResult,
           metodo: 'llm',
+          llmLatencyMs: typeof llmResult.llmLatencyMs === 'number' ? llmResult.llmLatencyMs : 0,
+          paso_por_llm: true,
         };
       } catch (llmError) {
         console.error('[AI-CLASSIFIER] Error LLM:', llmError.message);
@@ -505,6 +538,8 @@ async function aiClassifierMiddleware(req, res, next) {
           confianza: Math.max(classification.confianza || 0, 0.6),
           razon: `${classification.razon} | Fallback por error LLM`,
           metodo: `${classification.metodo}-fallback-llm`,
+          llmLatencyMs: typeof llmError.llmLatencyMs === 'number' ? llmError.llmLatencyMs : 0,
+          paso_por_llm: true,
         };
       }
     } else {
@@ -524,6 +559,9 @@ async function aiClassifierMiddleware(req, res, next) {
       ...classification,
       timestamp: new Date().toISOString(),
       latencyMs: Date.now() - startTime,
+      llmLatencyMs: 0,
+      heuristicLatencyMs: typeof classification.heuristicLatencyMs === 'number' ? classification.heuristicLatencyMs : 0,
+      paso_por_llm: false,
     };
     return next();
   }
@@ -599,6 +637,9 @@ async function aiClassifierMiddleware(req, res, next) {
     ...classification,
     nivel_ia: nivelIAEfectivo,
     latencyMs,
+    llmLatencyMs: typeof classification.llmLatencyMs === 'number' ? classification.llmLatencyMs : 0,
+    heuristicLatencyMs: typeof classification.heuristicLatencyMs === 'number' ? classification.heuristicLatencyMs : 0,
+    paso_por_llm: classification.paso_por_llm === true,
     timestamp: new Date().toISOString()
   };
 

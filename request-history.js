@@ -40,8 +40,8 @@ function encolarRequestLog(log) {
     heuristica_activada: typeof log.heuristica_activada === 'boolean' ? log.heuristica_activada : null,
     metodo_ia: log.metodo_ia || null,
     paso_por_llm: Boolean(log.paso_por_llm),
-    latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : null,
-    ia_habilitada: Boolean(log.ia_habilitada),
+    latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : 0,
+    latencia_heuristica_ms: typeof log.latencia_heuristica_ms === 'number' ? log.latencia_heuristica_ms : 0,
   };
 
   bufferPeticiones.push(registroPeticion);

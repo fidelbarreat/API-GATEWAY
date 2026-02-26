@@ -127,6 +127,7 @@ async function enviarAlertaSeguridad(evento = {}) {
   const confianza = Number(evento.confianza);
   const amenazas = Array.isArray(evento.amenazas) ? evento.amenazas : [];
   const evidencia = String(evento.evidencia || '').slice(0, 500);
+  const emailDestinoEvento = String(evento.emailDestino || '').trim();
   const timestampIso = evento.ts ? new Date(evento.ts).toISOString() : new Date().toISOString();
 
   const enfriamientoMs = obtenerNumeroEnv('ENFRIAMIENTO_ALERTA_SEGURIDAD_MS', 120_000);
@@ -141,7 +142,9 @@ async function enviarAlertaSeguridad(evento = {}) {
   estadoAlertasSeguridad.ultimaAlertaPorClave.set(clave, ahora);
 
   const { transportadorCorreo, DESDE_SMTP, ALERTA_PARA } = obtenerCanalAlertasSeguridad();
-  if (!transportadorCorreo) {
+  const destinoCorreo = emailDestinoEvento || ALERTA_PARA;
+
+  if (!transportadorCorreo || !destinoCorreo) {
     console.warn('[ALERTA SEGURIDAD omitida] SMTP no configurado:', { tipo, ip, uuid });
     return { sent: false, reason: 'smtp-not-configured' };
   }
@@ -167,7 +170,7 @@ async function enviarAlertaSeguridad(evento = {}) {
 
   await transportadorCorreo.sendMail({
     from: DESDE_SMTP,
-    to: ALERTA_PARA,
+    to: destinoCorreo,
     subject: asunto,
     text: cuerpo,
   });
@@ -176,7 +179,7 @@ async function enviarAlertaSeguridad(evento = {}) {
 }
 
 // Crea un monitor individual para una API específica.
-function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, ALERTA_PARA }) {
+function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, ALERTA_PARA_API }) {
   const INTERVALO_HEALTHCHECK_MS = obtenerNumeroEnv('INTERVALO_HEALTHCHECK_MS', 30_000);
   const TIMEOUT_HEALTHCHECK_MS = obtenerNumeroEnv('TIMEOUT_HEALTHCHECK_MS', 5_000);
   const UMBRAL_LATENCIA_MS = obtenerNumeroEnv('UMBRAL_LATENCIA_MS', 1500);
@@ -205,14 +208,14 @@ function crearMonitorAPI({ uuid, nombre, url, transportadorCorreo, DESDE_SMTP, A
     if (ahora - estadoMonitor.ultimaAlertaTs < ENFRIAMIENTO_ALERTA_MS) return;
     estadoMonitor.ultimaAlertaTs = ahora;
 
-    if (!transportadorCorreo) {
+    if (!transportadorCorreo || !ALERTA_PARA_API) {
       console.warn('[ALERTA omitida] SMTP no configurado:', { asunto });
       return;
     }
 
     await transportadorCorreo.sendMail({
       from: DESDE_SMTP,
-      to: ALERTA_PARA,
+      to: ALERTA_PARA_API,
       subject: asunto,
       text: texto,
     });
@@ -314,13 +317,14 @@ function iniciarMonitorMultiplesAPIs(app, apisConfig = {}) {
   // Crear monitor para cada API activa
   Object.entries(apisConfig).forEach(([uuid, config]) => {
     if (config.activa) {
+      const alertaParaApi = String(config.email_notificacion || '').trim() || ALERTA_PARA;
       monitores[uuid] = crearMonitorAPI({
         uuid,
         nombre: config.nombre,
         url: config.url,
         transportadorCorreo,
         DESDE_SMTP,
-        ALERTA_PARA,
+        ALERTA_PARA_API: alertaParaApi,
       });
       console.log(`✓ Monitor iniciado: ${config.nombre} (${uuid})`);
     }

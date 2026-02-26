@@ -49,10 +49,41 @@ npm start
 node test-healthcheck.js ataques
 ```
 
+4.1) Generar tráfico GET periódico (sin ráfaga DDoS):
+
+```bash
+npm run repeat:get
+```
+
+Opcional por CLI:
+
+```bash
+node repeat-get.js https://api-gateway-test-hn9e.onrender.com/test-uuid-healthcheck/health
+```
+
 Variables opcionales para la simulación:
 
-- `TEST_GATEWAY_BASE` (default: `http://localhost:3000`)
-- `TEST_UUID` (default: `test-uuid-healthcheck`)
+- `TEST_TARGET_BASE`: base completa a atacar (puede incluir UUID/path). Ej: `https://api-gateway-test-hn9e.onrender.com/test-uuid-healthcheck`
+- `TEST_GATEWAY_BASE` (default: `http://localhost:3000`) solo para compatibilidad
+- `TEST_UUID` (opcional, legado) solo si no defines `TEST_TARGET_BASE`
+
+Variables para `repeat-get.js`:
+
+- `REPEAT_GET_URL`: URL completa objetivo para GET periódico.
+- `REPEAT_GET_INTERVAL_MS`: intervalo base entre requests (default `1500`).
+- `REPEAT_GET_JITTER_MS`: variación aleatoria para evitar patrón fijo (default `150`).
+- `REPEAT_GET_REQUESTS`: cantidad total de requests (default `30`).
+- `REPEAT_GET_TIMEOUT_MS`: timeout por request (default `8000`).
+
+### Checklist rápido (end-to-end)
+
+1. Levantar backend fake (`node test-healthcheck.js`) y gateway (`npm start`).
+2. Confirmar gateway arriba en `GET /gateway/health`.
+3. Ejecutar `node test-healthcheck.js ataques`.
+4. Verificar en consola del gateway eventos `riesgo-medio/alto` y bloqueos DoS/IA.
+5. Confirmar correos de alerta (asunto `[API-GW][SECURITY]...`).
+6. Revisar métricas en `GET /gateway/ai/metrics` y `GET /gateway/metrics`.
+7. Si una IP quedó bloqueada de pruebas, desbloquear con `DELETE /gateway/blacklist/{ip}`.
 
 5) Acciones (terminal 4):
 
@@ -117,6 +148,17 @@ Orden de decisión:
   - `NO`: se conserva resultado de heurística (sin llamar LLM).
   - `BAJO`/`ALTO`: se llama al LLM y se actúa según clasificación y nivel.
 
+## Correo por API (`email_notificacion`)
+
+La tabla `apis` soporta la columna `email_notificacion` para definir destinatario por API.
+
+- Si una API tiene `email_notificacion`, todas sus alertas (health-check y seguridad) se envían a ese correo.
+- Si no lo tiene, se usa el fallback global `ALERTA_PARA`.
+
+Para crear la columna en Supabase:
+
+- `supabase_add_email_notificacion.sql`
+
 ## Histórico de peticiones en Supabase
 
 El gateway mantiene un diario local en memoria de cada petición proxied y lo sincroniza en lote a Supabase cada `15s` (configurable).
@@ -135,13 +177,14 @@ Este script crea:
 Para comparar rendimiento IA vs no IA, ejecuta también:
 
 - `supabase_historial_ia_performance.sql`
+- `supabase_add_latencia_heuristica.sql`
 
 Este script agrega en `historial_peticiones`:
 
-- `ia_habilitada`: si la API tenía IA activa (`nivel_ia != NO`)
 - `metodo_ia`: cómo se evaluó (`disabled-by-api`, `static-skip`, `heuristic`, `llm`, etc.)
 - `paso_por_llm`: `true/false` si hubo llamada al LLM
 - `latencia_ia_ms`: tiempo del clasificador IA
+- `latencia_heuristica_ms`: tiempo de evaluación heurística
 - `nivel_ia`: nivel aplicado en esa petición (`NO`, `BAJO`, `ALTO`)
 
 ### Variables de entorno (histórico)

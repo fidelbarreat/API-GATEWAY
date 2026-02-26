@@ -30,9 +30,9 @@ async function metricsMiddleware(req, res, next) {
       nivel_ia: ai.nivel_ia || null,
       heuristica_activada: typeof ai.heuristica_activada === 'boolean' ? ai.heuristica_activada : null,
       metodo_ia: ai.metodo || null,
-      paso_por_llm: ai.metodo === 'llm',
-      latencia_ia_ms: typeof ai.latencyMs === 'number' ? ai.latencyMs : null,
-      ia_habilitada: ai.nivel_ia ? ai.nivel_ia !== 'NO' : false,
+      paso_por_llm: ai.paso_por_llm === true,
+      latencia_ia_ms: typeof ai.llmLatencyMs === 'number' ? ai.llmLatencyMs : 0,
+      latencia_heuristica_ms: typeof ai.heuristicLatencyMs === 'number' ? ai.heuristicLatencyMs : 0,
     });
   });
 
