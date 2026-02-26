@@ -239,7 +239,7 @@ async function classifyWithLLM(requestData) {
     throw new Error('OPENAI_API_KEY no configurada');
   }
 
-  const { url, method, headers, body, ip, queryParams } = requestData;
+  const { url, method, headers, body, ip, queryParams, serviceTierPriority } = requestData;
 
   const bodyString = JSON.stringify(body || {});
   const finalBody = bodyString.length > 1000 
@@ -290,6 +290,10 @@ async function classifyWithLLM(requestData) {
     ],
     max_completion_tokens: 200,
   };
+
+  if (serviceTierPriority === true) {
+    basePayload.service_tier = 'priority';
+  }
 
   let latenciaSolicitudesLLMMs = 0;
 
@@ -350,6 +354,16 @@ async function classifyWithLLM(requestData) {
     response = await solicitarChat(basePayload);
   }
 
+  if (
+    !response.ok
+    && serviceTierPriority === true
+    && (response.status === 400 || response.status === 404 || response.status === 422)
+  ) {
+    const payloadSinPriority = { ...basePayload };
+    delete payloadSinPriority.service_tier;
+    response = await solicitarChat(payloadSinPriority);
+  }
+
   if (!response.ok) {
     const error = await response.text();
     const openAIError = new Error(`OpenAI API error: ${response.status} - ${error}`);
@@ -407,6 +421,7 @@ async function aiClassifierMiddleware(req, res, next) {
     method: req.method,
     url: req.originalUrl || req.url,
     queryParams: req.query,
+    serviceTierPriority: req.apiConfig?.service_tier_priority === true,
     headers: {
       'user-agent': req.headers['user-agent'],
       'content-type': req.headers['content-type'],

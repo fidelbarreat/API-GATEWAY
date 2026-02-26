@@ -132,6 +132,15 @@ Valores soportados:
 - `BAJO`: IA clasifica y marca warnings, pero no bloquea
 - `ALTO`: IA clasifica y puede bloquear en `riesgo-alto` (comportamiento actual)
 
+Columna opcional por API en `apis`:
+
+- `service_tier_priority` (`boolean`, default `false`): cuando está en `true`, el gateway solicita al LLM `service_tier: "priority"`.
+  - Si la API rechaza ese parámetro, el gateway hace fallback automático al tier estándar para no interrumpir clasificación.
+
+Script SQL para crear la columna:
+
+- `supabase_add_service_tier_priority.sql`
+
 Si `nivel_ia` no existe o viene inválido, el gateway usa `BAJO` por defecto.
 
 ## Heurística por API (`heuristica_activada`)

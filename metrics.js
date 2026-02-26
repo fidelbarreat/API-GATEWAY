@@ -28,7 +28,7 @@ async function metricsMiddleware(req, res, next) {
       amenazas_ia: ai.amenazas_detectadas || [],
       confianza_ia: typeof ai.confianza === 'number' ? ai.confianza : null,
       nivel_ia: ai.nivel_ia || null,
-      heuristica_activada: typeof ai.heuristica_activada === 'boolean' ? ai.heuristica_activada : null,
+      heuristica_activada: ai.heuristica_activada === true,
       metodo_ia: ai.metodo || null,
       paso_por_llm: ai.paso_por_llm === true,
       latencia_ia_ms: typeof ai.llmLatencyMs === 'number' ? ai.llmLatencyMs : 0,
