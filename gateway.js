@@ -136,6 +136,9 @@ app.get('/gateway/ai/status', (_req, res) => {
   });
 });
 
+// Medición end-to-end por UUID (desde entrada al gateway hasta respuesta final)
+app.use('/:uuid', metricsMiddleware);
+
 // Resolver API por UUID antes de middlewares de seguridad/proxy para usar configuración por API
 app.use('/:uuid', async (req, res, next) => {
   const uuid = req.params.uuid;
@@ -179,8 +182,8 @@ app.use('/:uuid', blacklistMiddleware);
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// Middlewares antes del proxy: IA classifier -> metrics
-app.use('/:uuid', aiClassifierMiddleware, metricsMiddleware);
+// Middlewares antes del proxy: IA classifier
+app.use('/:uuid', aiClassifierMiddleware);
 
 // Middleware de extracción de UUID + proxy dinámico
 app.use(async (req, res, next) => {
