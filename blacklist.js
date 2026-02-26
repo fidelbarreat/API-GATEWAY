@@ -5,14 +5,65 @@ const { enviarAlertaSeguridad } = require('./monitor');
 const { isIpBlockingEnabled } = require('./supabase');
 
 const DOS_THRESHOLD = 20; // requests en 1 min => consideramos DoS
+const DOS_WINDOW_MS = 60_000;
+const contadorDosMemoria = new Map();
+
+function incrementarContadorDosMemoria(ip) {
+  const ahora = Date.now();
+  const actual = contadorDosMemoria.get(ip);
+
+  if (!actual || ahora - actual.inicioVentana >= DOS_WINDOW_MS) {
+    contadorDosMemoria.set(ip, { inicioVentana: ahora, conteo: 1 });
+    return 1;
+  }
+
+  actual.conteo += 1;
+  contadorDosMemoria.set(ip, actual);
+  return actual.conteo;
+}
 
 async function blacklistMiddleware(req, res, next) {
   const ip = obtenerIpCliente(req);
   const bloqueoIpActivo = await isIpBlockingEnabled();
 
+  if (!bloqueoIpActivo) {
+    const current = incrementarContadorDosMemoria(ip);
+
+    if (current > DOS_THRESHOLD) {
+      try {
+        await metrics.incr(`dos_detectado_no_bloqueado:${req.params?.uuid || 'global'}`);
+      } catch (_metricsError) {
+        // Ignorar error de métricas
+      }
+
+      enviarAlertaSeguridad({
+        tipo: 'DDOS',
+        nivel: 'ALTO',
+        origen: 'blacklist-middleware',
+        accion: 'simulada-no-bloqueada',
+        uuid: req.params?.uuid || 'global',
+        apiNombre: req.apiConfig?.nombre || 'API desconocida',
+        emailDestino: req.apiConfig?.email_notificacion || null,
+        ip,
+        metodo: req.method,
+        ruta: req.originalUrl || req.url,
+        amenazas: ['DOS_DETECTADO'],
+        evidencia: `BLOQIP=0. En memoria se superó umbral ${DOS_THRESHOLD} req/min. Conteo actual: ${current}`,
+        ts: Date.now(),
+      }).catch((alertError) => {
+        console.error('[BLACKLIST] Error enviando alerta de seguridad:', alertError.message);
+      });
+
+      res.setHeader('X-Security-Would-Block', 'dos');
+      res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
+    }
+
+    return next();
+  }
+
   try {
-    // Verificar si IP está en blacklist (si BLOQIP está activo)
-    const isBlocked = bloqueoIpActivo ? await blacklist.exists(ip) : false;
+    // Verificar si IP está en blacklist
+    const isBlocked = await blacklist.exists(ip);
 
     if (isBlocked) {
       try {
@@ -45,26 +96,18 @@ async function blacklistMiddleware(req, res, next) {
 
     if (current > DOS_THRESHOLD) {
       const ttl = Number(process.env.BLACKLIST_TTL_DOS || 3600);
-      if (bloqueoIpActivo) {
-        try {
-          await blacklist.add(ip, ttl);
-          await metrics.incr(`dos_detectado:${req.params?.uuid || 'global'}`);
-        } catch (blockError) {
-          console.error('[BLACKLIST] Error bloqueando IP por DoS:', blockError.message);
-        }
-      } else {
-        try {
-          await metrics.incr(`dos_detectado_no_bloqueado:${req.params?.uuid || 'global'}`);
-        } catch (_metricsError) {
-          // Ignorar error de métricas
-        }
+      try {
+        await blacklist.add(ip, ttl);
+        await metrics.incr(`dos_detectado:${req.params?.uuid || 'global'}`);
+      } catch (blockError) {
+        console.error('[BLACKLIST] Error bloqueando IP por DoS:', blockError.message);
       }
 
       enviarAlertaSeguridad({
         tipo: 'DDOS',
         nivel: 'ALTO',
         origen: 'blacklist-middleware',
-        accion: bloqueoIpActivo ? 'bloqueada' : 'simulada-no-bloqueada',
+        accion: 'bloqueada',
         uuid: req.params?.uuid || 'global',
         apiNombre: req.apiConfig?.nombre || 'API desconocida',
         emailDestino: req.apiConfig?.email_notificacion || null,
@@ -77,12 +120,6 @@ async function blacklistMiddleware(req, res, next) {
       }).catch((alertError) => {
         console.error('[BLACKLIST] Error enviando alerta de seguridad:', alertError.message);
       });
-
-      if (!bloqueoIpActivo) {
-        res.setHeader('X-Security-Would-Block', 'dos');
-        res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
-        return next();
-      }
       
       return res.status(429).json({
         error: 'Posible ataque DoS detectado',

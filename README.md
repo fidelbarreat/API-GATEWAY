@@ -211,6 +211,8 @@ Este script agrega en `historial_peticiones`:
 
 - `SUPABASE_TABLA_HISTORIAL_PETICIONES` (default: `historial_peticiones`)
 - `SUPABASE_TABLA_DIARIO_SINCRONIZACION` (default: `diario_sincronizacion`)
+- `SUPABASE_TABLA_CONFIGURACION` (default: `configuracion`)
+- `CONFIG_REFRESH_INTERVAL_MS` (default: `60000`) frecuencia de consulta de configuración dinámica (ej. `BLOQIP`)
 - `INTERVALO_SINCRONIZACION_MS` (default: `15000`)
 - `MAX_BUFFER_PETICIONES` (default: `10000`)
 - `TAMANO_LOTE_SINCRONIZACION` (default: `500`)

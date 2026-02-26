@@ -22,8 +22,10 @@ const TABLA_DIARIO_SINCRONIZACION = process.env.SUPABASE_TABLA_DIARIO_SINCRONIZA
 const TABLA_CONFIGURACION = process.env.SUPABASE_TABLA_CONFIGURACION || 'configuracion';
 const NIVELES_IA_VALIDOS = new Set(['NO', 'BAJO', 'ALTO']);
 const CONFIG_CACHE_TTL_MS = Number(process.env.CONFIG_CACHE_TTL_MS || 10_000);
+const CONFIG_REFRESH_INTERVAL_MS = Number(process.env.CONFIG_REFRESH_INTERVAL_MS || 60_000);
 
 const cacheConfiguracion = new Map();
+let temporizadorConfig = null;
 
 function normalizarUrlDestino(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -186,6 +188,53 @@ async function obtenerValorConfiguracion(atributo) {
   return valor;
 }
 
+async function refrescarConfiguracionCache() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error('SUPABASE_URL o SUPABASE_KEY no configuradas');
+  }
+
+  const { data, error } = await supabase
+    .from(TABLA_CONFIGURACION)
+    .select('atributo,valor');
+
+  if (error) {
+    throw new Error(error.message || 'Error refrescando configuración');
+  }
+
+  const ahora = Date.now();
+  (data || []).forEach((row) => {
+    const clave = String(row.atributo || '').trim().toUpperCase();
+    if (!clave) return;
+    cacheConfiguracion.set(clave, { valor: row.valor ?? null, ts: ahora });
+  });
+}
+
+function iniciarSincronizacionConfiguracion() {
+  if (temporizadorConfig) return;
+
+  refrescarConfiguracionCache().catch((error) => {
+    console.error('[SUPABASE] Error en refresco inicial de configuración:', error.message);
+  });
+
+  temporizadorConfig = setInterval(() => {
+    refrescarConfiguracionCache().catch((error) => {
+      console.error('[SUPABASE] Error refrescando configuración:', error.message);
+    });
+  }, CONFIG_REFRESH_INTERVAL_MS);
+
+  if (typeof temporizadorConfig.unref === 'function') {
+    temporizadorConfig.unref();
+  }
+
+  console.log(`[SUPABASE] Sincronización de configuración activa cada ${CONFIG_REFRESH_INTERVAL_MS}ms`);
+}
+
+function detenerSincronizacionConfiguracion() {
+  if (!temporizadorConfig) return;
+  clearInterval(temporizadorConfig);
+  temporizadorConfig = null;
+}
+
 async function isIpBlockingEnabled() {
   try {
     const valor = await obtenerValorConfiguracion('BLOQIP');
@@ -202,4 +251,7 @@ module.exports = {
   insertarDiarioSincronizacion,
   obtenerValorConfiguracion,
   isIpBlockingEnabled,
+  iniciarSincronizacionConfiguracion,
+  detenerSincronizacionConfiguracion,
+  refrescarConfiguracionCache,
 };

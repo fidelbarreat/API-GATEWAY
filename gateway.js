@@ -8,7 +8,7 @@ try {
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { iniciarMonitorMultiplesAPIs } = require('./monitor');
-const { fetchApis } = require('./supabase');
+const { fetchApis, iniciarSincronizacionConfiguracion, detenerSincronizacionConfiguracion } = require('./supabase');
 const { iniciarRequestHistorySync, detenerRequestHistorySync } = require('./request-history');
 
 // Middlewares Redis
@@ -260,6 +260,7 @@ async function iniciarServidor() {
 
   // Iniciar monitoreo multi-API (health-check + alertas)
   iniciarMonitorMultiplesAPIs(app, apisDisponibles);
+  iniciarSincronizacionConfiguracion();
   iniciarRequestHistorySync();
 
   app.listen(PUERTO, HOST, () => {
@@ -283,6 +284,7 @@ async function apagarGateway(signal) {
   cerrando = true;
 
   console.log(`\n[SHUTDOWN] Señal recibida: ${signal}. Sincronizando reportes pendientes...`);
+  detenerSincronizacionConfiguracion();
   await detenerRequestHistorySync();
   process.exit(0);
 }
