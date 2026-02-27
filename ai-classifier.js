@@ -58,7 +58,7 @@ function normalizarClasificacion(valor) {
   if (texto === 'riesgo-alto' || texto === 'alto') return RISK_THRESHOLDS.HIGH;
   if (texto === 'riesgo-medio' || texto === 'medio') return RISK_THRESHOLDS.MEDIUM;
   if (texto === 'legitimo' || texto === 'legítimo' || texto === 'bajo') return RISK_THRESHOLDS.LOW;
-  return RISK_THRESHOLDS.MEDIUM;
+  return null;
 }
 
 function normalizarAmenazas(amenazas) {
@@ -69,21 +69,29 @@ function normalizarAmenazas(amenazas) {
     .slice(0, 10);
 }
 
-function normalizarConfianza(confianza) {
+function normalizarConfianza(confianza, fallback = 0.5) {
   const valor = Number(confianza);
-  if (!Number.isFinite(valor)) return 0.5;
+  if (!Number.isFinite(valor)) return fallback;
   return Math.max(0, Math.min(1, valor));
 }
 
-function normalizarResultadoLLM(resultado) {
-  const clasificacion = normalizarClasificacion(resultado?.clasificacion);
+function normalizarResultadoLLM(resultado, fallback = {}) {
+  const fallbackClasificacion = CLASIFICACIONES_VALIDAS.has(fallback?.clasificacion)
+    ? fallback.clasificacion
+    : RISK_THRESHOLDS.LOW;
+  const fallbackConfianza = Number.isFinite(Number(fallback?.confianza))
+    ? Number(fallback.confianza)
+    : 0.95;
+
+  const clasificacionNormalizada = normalizarClasificacion(resultado?.clasificacion);
+  const clasificacion = clasificacionNormalizada || fallbackClasificacion;
   const amenazasDetectadas = normalizarAmenazas(resultado?.amenazas_detectadas);
-  const confianza = normalizarConfianza(resultado?.confianza);
-  const razon = String(resultado?.razon || 'Clasificación generada por LLM').trim().slice(0, 180);
+  const confianza = normalizarConfianza(resultado?.confianza, fallbackConfianza);
+  const razon = String(resultado?.razon || fallback?.razon || 'Clasificación generada por LLM').trim().slice(0, 180);
 
   if (!CLASIFICACIONES_VALIDAS.has(clasificacion)) {
     return {
-      clasificacion: RISK_THRESHOLDS.MEDIUM,
+      clasificacion: fallbackClasificacion,
       amenazas_detectadas: amenazasDetectadas,
       confianza,
       razon,
@@ -235,7 +243,7 @@ function quickAnalysis(requestData) {
  * @param {Object} requestData - Datos de la petición
  * @returns {Promise<Object>} Clasificación del LLM
  */
-async function classifyWithLLM(requestData) {
+async function classifyWithLLM(requestData, fallbackResultado = {}) {
   if (!OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY no configurada');
   }
@@ -398,7 +406,7 @@ async function classifyWithLLM(requestData) {
   }
 
   return {
-    ...normalizarResultadoLLM(parsed),
+    ...normalizarResultadoLLM(parsed, fallbackResultado),
     llmLatencyMs: latenciaSolicitudesLLMMs,
   };
 }
@@ -554,7 +562,11 @@ async function aiClassifierMiddleware(req, res, next) {
     // Paso 3: nivel_ia BAJO/ALTO => llamar IA (sin depender de heurística)
     if (OPENAI_API_KEY) {
       try {
-        const llmResult = await classifyWithLLM(requestData);
+        const llmResult = await classifyWithLLM(requestData, {
+          clasificacion: classification.clasificacion,
+          confianza: classification.confianza,
+          razon: classification.razon,
+        });
         classification = {
           ...classification,
           ...llmResult,
