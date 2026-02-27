@@ -36,6 +36,7 @@ function encolarRequestLog(log) {
     clasificacion_ia: log.clasificacion_ia || null,
     amenazas_ia: Array.isArray(log.amenazas_ia) ? log.amenazas_ia : [],
     confianza_ia: typeof log.confianza_ia === 'number' ? log.confianza_ia : null,
+    razon_ia: log.razon_ia || null,
     nivel_ia: log.nivel_ia || null,
     heuristica_activada: log.heuristica_activada === true,
     metodo_ia: log.metodo_ia || null,

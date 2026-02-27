@@ -205,6 +205,7 @@ Este script agrega en `historial_peticiones`:
 - `paso_por_llm`: `true/false` si hubo llamada al LLM
 - `latencia_ia_ms`: tiempo del clasificador IA
 - `latencia_heuristica_ms`: tiempo de evaluación heurística
+- `razon_ia`: justificación textual de la clasificación IA/heurística
 - `nivel_ia`: nivel aplicado en esa petición (`NO`, `BAJO`, `ALTO`)
 
 ### Variables de entorno (histórico)
