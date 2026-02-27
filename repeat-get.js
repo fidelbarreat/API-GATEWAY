@@ -1,3 +1,9 @@
+try {
+  require('dotenv').config();
+} catch (_e) {
+  // dotenv es opcional
+}
+
 const { setTimeout: sleep } = require('timers/promises');
 
 function leerNumeroEnv(nombre, porDefecto) {

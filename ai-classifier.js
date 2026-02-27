@@ -10,6 +10,7 @@ const { isIpBlockingEnabled } = require('./supabase');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const AI_MODEL = process.env.AI_MODEL || 'gpt-5-mini';
 const AI_TIMEOUT = Number(process.env.AI_TIMEOUT || 5000);
+const AI_DEBUG = String(process.env.AI_DEBUG || 'false').toLowerCase() === 'true';
 const NIVELES_IA_VALIDOS = new Set(['NO', 'BAJO', 'ALTO']);
 
 // Umbrales de riesgo
@@ -414,6 +415,9 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
   if (!response.ok) {
     const error = await response.text();
     const openAIError = new Error(`OpenAI API error: ${response.status} - ${error}`);
+    openAIError.code = 'OPENAI_HTTP_ERROR';
+    openAIError.status = response.status;
+    openAIError.responseBody = String(error || '').slice(0, 4000);
     openAIError.llmLatencyMs = latenciaSolicitudesLLMMs;
     throw openAIError;
   }
@@ -426,6 +430,7 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
 
   if (!content || typeof content !== 'string') {
     const llmContentError = new Error('Respuesta del LLM vacía o inválida');
+    llmContentError.code = 'LLM_EMPTY_CONTENT';
     llmContentError.llmLatencyMs = latenciaSolicitudesLLMMs;
     throw llmContentError;
   }
@@ -437,6 +442,8 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       const llmJsonError = new Error('Respuesta del LLM no contiene JSON válido');
+      llmJsonError.code = 'LLM_INVALID_JSON';
+      llmJsonError.responseBody = String(content || '').slice(0, 4000);
       llmJsonError.llmLatencyMs = latenciaSolicitudesLLMMs;
       throw llmJsonError;
     }
@@ -639,7 +646,31 @@ async function aiClassifierMiddleware(req, res, next) {
           paso_por_llm: true,
         };
       } catch (llmError) {
-        console.error('[AI-CLASSIFIER] Error LLM:', llmError.message);
+        const llmErrorLog = {
+          mensaje: llmError.message,
+          code: llmError.code || null,
+          status: llmError.status || null,
+          llmLatencyMs: typeof llmError.llmLatencyMs === 'number' ? llmError.llmLatencyMs : null,
+          timeoutMs: AI_TIMEOUT,
+          model: AI_MODEL,
+          uuid,
+          nivel_ia: nivelIAEfectivo,
+          metodo: req.method,
+          ruta: req.originalUrl || req.url,
+          ip,
+          hasApiKey: Boolean(OPENAI_API_KEY),
+        };
+
+        console.error('[AI-CLASSIFIER] Error LLM (fallback activado):', llmErrorLog);
+
+        if (llmError.responseBody) {
+          console.error('[AI-CLASSIFIER] LLM error body:', String(llmError.responseBody).slice(0, 1200));
+        }
+
+        if (AI_DEBUG) {
+          console.error('[AI-CLASSIFIER][DEBUG] Stack LLM:', llmError.stack);
+        }
+
         classification = {
           ...classification,
           confianza: Math.max(classification.confianza || 0, 0.6),

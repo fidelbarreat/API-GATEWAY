@@ -183,33 +183,6 @@ Script SQL sugerido:
 
 El gateway mantiene un diario local en memoria de cada petición proxied y lo sincroniza en lote a Supabase cada `15s` (configurable).
 
-### Tablas
-
-Ejecuta el script SQL en Supabase SQL Editor:
-
-- `supabase_request_history.sql`
-
-Este script crea:
-
-- `historial_peticiones`: histórico de peticiones (método, ruta, latencia, estado, IP, clasificación IA)
-- `diario_sincronizacion`: historial de cada sincronización (éxito/error y cantidad de registros)
-
-Para comparar rendimiento IA vs no IA, ejecuta también:
-
-- `supabase_historial_ia_performance.sql`
-- `supabase_add_latencia_heuristica.sql`
-- `supabase_amenazas_ia_texto.sql`
-
-Este script agrega en `historial_peticiones`:
-
-- `metodo_ia`: cómo se evaluó (`disabled-by-api`, `static-skip`, `heuristic`, `llm`, etc.)
-- `paso_por_llm`: `true/false` si hubo llamada al LLM
-- `latencia_ia_ms`: tiempo del clasificador IA
-- `latencia_heuristica_ms`: tiempo de evaluación heurística
-- `razon_ia`: justificación textual de la clasificación IA/heurística
-- `nivel_ia`: nivel aplicado en esa petición (`NO`, `BAJO`, `ALTO`)
-- `amenazas_ia`: amenaza principal como texto (ej. `SQL_INJECTION`, `XSS`, `SCRAPING`, `NINGUNA`)
-
 ### Variables de entorno (histórico)
 
 - `SUPABASE_TABLA_HISTORIAL_PETICIONES` (default: `historial_peticiones`)
