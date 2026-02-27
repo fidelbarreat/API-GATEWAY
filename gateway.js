@@ -8,7 +8,7 @@ try {
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { iniciarMonitorMultiplesAPIs } = require('./monitor');
-const { fetchApis, iniciarSincronizacionConfiguracion, detenerSincronizacionConfiguracion } = require('./supabase');
+const { fetchApis, iniciarSincronizacionConfiguracion, detenerSincronizacionConfiguracion, obtenerEstadoBloqueoIp } = require('./supabase');
 const { iniciarRequestHistorySync, detenerRequestHistorySync } = require('./request-history');
 
 // Middlewares Redis
@@ -134,6 +134,15 @@ app.get('/gateway/ai/status', (_req, res) => {
     model: process.env.AI_MODEL || 'gpt-5-mini',
     api_key_configured: !!process.env.OPENAI_API_KEY
   });
+});
+
+app.get('/gateway/config/bloqip', async (_req, res) => {
+  try {
+    const estado = await obtenerEstadoBloqueoIp();
+    res.json(estado);
+  } catch (error) {
+    res.status(500).json({ error: 'Error obteniendo estado BLOQIP', message: error.message });
+  }
 });
 
 // Medición end-to-end por UUID (desde entrada al gateway hasta respuesta final)

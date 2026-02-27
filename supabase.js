@@ -26,6 +26,8 @@ const CONFIG_REFRESH_INTERVAL_MS = Number(process.env.CONFIG_REFRESH_INTERVAL_MS
 
 const cacheConfiguracion = new Map();
 let temporizadorConfig = null;
+let ultimaSincronizacionConfiguracion = null;
+let ultimoErrorSincronizacionConfiguracion = null;
 
 function normalizarUrlDestino(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -208,17 +210,22 @@ async function refrescarConfiguracionCache() {
     if (!clave) return;
     cacheConfiguracion.set(clave, { valor: row.valor ?? null, ts: ahora });
   });
+
+  ultimaSincronizacionConfiguracion = new Date(ahora).toISOString();
+  ultimoErrorSincronizacionConfiguracion = null;
 }
 
 function iniciarSincronizacionConfiguracion() {
   if (temporizadorConfig) return;
 
   refrescarConfiguracionCache().catch((error) => {
+    ultimoErrorSincronizacionConfiguracion = error.message;
     console.error('[SUPABASE] Error en refresco inicial de configuración:', error.message);
   });
 
   temporizadorConfig = setInterval(() => {
     refrescarConfiguracionCache().catch((error) => {
+      ultimoErrorSincronizacionConfiguracion = error.message;
       console.error('[SUPABASE] Error refrescando configuración:', error.message);
     });
   }, CONFIG_REFRESH_INTERVAL_MS);
@@ -239,11 +246,26 @@ function detenerSincronizacionConfiguracion() {
 async function isIpBlockingEnabled() {
   try {
     const valor = await obtenerValorConfiguracion('BLOQIP');
-    return String(valor ?? '1').trim() !== '0';
+    return String(valor ?? '').trim() === '1';
   } catch (error) {
-    console.error('[SUPABASE] Error leyendo BLOQIP, se mantiene bloqueo activo por seguridad:', error.message);
-    return true;
+    console.error('[SUPABASE] Error leyendo BLOQIP, se desactiva bloqueo por seguridad de pruebas:', error.message);
+    return false;
   }
+}
+
+async function obtenerEstadoBloqueoIp() {
+  const valor = await obtenerValorConfiguracion('BLOQIP');
+  const bloqueoIpActivo = String(valor ?? '').trim() === '1';
+
+  return {
+    atributo: 'BLOQIP',
+    valor: valor ?? null,
+    bloqueo_ip_activo: bloqueoIpActivo,
+    ultima_sincronizacion_configuracion: ultimaSincronizacionConfiguracion,
+    ultimo_error_sincronizacion_configuracion: ultimoErrorSincronizacionConfiguracion,
+    config_refresh_interval_ms: CONFIG_REFRESH_INTERVAL_MS,
+    config_cache_ttl_ms: CONFIG_CACHE_TTL_MS,
+  };
 }
 
 module.exports = {
@@ -252,6 +274,7 @@ module.exports = {
   insertarDiarioSincronizacion,
   obtenerValorConfiguracion,
   isIpBlockingEnabled,
+  obtenerEstadoBloqueoIp,
   iniciarSincronizacionConfiguracion,
   detenerSincronizacionConfiguracion,
   refrescarConfiguracionCache,
