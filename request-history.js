@@ -34,7 +34,7 @@ function encolarRequestLog(log) {
     ip_cliente: log.ip_cliente || null,
     agente_usuario: log.agente_usuario || null,
     clasificacion_ia: log.clasificacion_ia || null,
-    amenazas_ia: Array.isArray(log.amenazas_ia) ? log.amenazas_ia : [],
+    amenazas_ia: String(log.amenazas_ia || 'NINGUNA'),
     confianza_ia: typeof log.confianza_ia === 'number' ? log.confianza_ia : null,
     razon_ia: log.razon_ia || null,
     nivel_ia: log.nivel_ia || null,

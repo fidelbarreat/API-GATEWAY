@@ -125,7 +125,9 @@ async function enviarAlertaSeguridad(evento = {}) {
   const ruta = String(evento.ruta || 'N/A');
   const metodo = String(evento.metodo || 'N/A');
   const confianza = Number(evento.confianza);
-  const amenazas = Array.isArray(evento.amenazas) ? evento.amenazas : [];
+  const amenazasTexto = Array.isArray(evento.amenazas)
+    ? evento.amenazas.filter(Boolean).join(', ')
+    : String(evento.amenazas || '').trim();
   const evidencia = String(evento.evidencia || '').slice(0, 500);
   const emailDestinoEvento = String(evento.emailDestino || '').trim();
   const timestampIso = evento.ts ? new Date(evento.ts).toISOString() : new Date().toISOString();
@@ -162,7 +164,7 @@ async function enviarAlertaSeguridad(evento = {}) {
     `IP cliente: ${ip}`,
     `Método: ${metodo}`,
     `Ruta: ${ruta}`,
-    `Amenazas: ${amenazas.length ? amenazas.join(', ') : 'N/A'}`,
+    `Amenazas: ${amenazasTexto || 'N/A'}`,
     `Confianza: ${Number.isFinite(confianza) ? confianza : 'N/A'}`,
     `Evidencia: ${evidencia || 'N/A'}`,
     `Timestamp: ${timestampIso}`,

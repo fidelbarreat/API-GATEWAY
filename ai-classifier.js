@@ -61,12 +61,40 @@ function normalizarClasificacion(valor) {
   return null;
 }
 
-function normalizarAmenazas(amenazas) {
-  if (!Array.isArray(amenazas)) return [];
-  return amenazas
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-    .slice(0, 10);
+function obtenerAmenazaPrincipalDesdeLista(amenazas) {
+  if (!Array.isArray(amenazas) || amenazas.length === 0) return 'NINGUNA';
+
+  const normalizadas = amenazas
+    .map((item) => String(item || '').trim().toUpperCase())
+    .filter(Boolean);
+
+  if (normalizadas.includes('SQL_INJECTION') || normalizadas.includes('SQLI')) return 'SQL_INJECTION';
+  if (normalizadas.includes('XSS')) return 'XSS';
+  if (normalizadas.includes('PATH_TRAVERSAL') || normalizadas.includes('PATH TRAVERSAL')) return 'PATH_TRAVERSAL';
+  if (normalizadas.includes('RCE')) return 'RCE';
+  if (normalizadas.includes('POTENTIAL_SCRAPER') || normalizadas.includes('SCRAPING')) return 'SCRAPING';
+  if (normalizadas.includes('SUSPICIOUS_ADMIN_ACCESS')) return 'SUSPICIOUS_ADMIN_ACCESS';
+  if (normalizadas.includes('ANOMALIA_HEADERS')) return 'ANOMALIA_HEADERS';
+
+  return normalizadas[0] || 'NINGUNA';
+}
+
+function normalizarAmenazaTexto(amenaza, fallback = 'NINGUNA') {
+  const respaldo = String(fallback || 'NINGUNA').trim().toUpperCase() || 'NINGUNA';
+
+  if (Array.isArray(amenaza)) {
+    return obtenerAmenazaPrincipalDesdeLista(amenaza);
+  }
+
+  const valor = String(amenaza || '').trim();
+  if (!valor) return respaldo;
+
+  const texto = valor.toUpperCase();
+  if (texto === 'NINGUNA' || texto === 'LEGITIMO' || texto === 'LEGÍTIMO') return 'NINGUNA';
+  if (texto === 'SQLI') return 'SQL_INJECTION';
+  if (texto === 'POTENTIAL_SCRAPER') return 'SCRAPING';
+
+  return texto;
 }
 
 function normalizarConfianza(confianza, fallback = 0.5) {
@@ -85,14 +113,17 @@ function normalizarResultadoLLM(resultado, fallback = {}) {
 
   const clasificacionNormalizada = normalizarClasificacion(resultado?.clasificacion);
   const clasificacion = clasificacionNormalizada || fallbackClasificacion;
-  const amenazasDetectadas = normalizarAmenazas(resultado?.amenazas_detectadas);
+  const amenazaDetectada = normalizarAmenazaTexto(
+    resultado?.amenazas_detectadas,
+    fallback?.amenazas_detectadas || 'NINGUNA'
+  );
   const confianza = normalizarConfianza(resultado?.confianza, fallbackConfianza);
   const razon = String(resultado?.razon || fallback?.razon || 'Clasificación generada por LLM').trim().slice(0, 180);
 
   if (!CLASIFICACIONES_VALIDAS.has(clasificacion)) {
     return {
       clasificacion: fallbackClasificacion,
-      amenazas_detectadas: amenazasDetectadas,
+      amenazas_detectadas: amenazaDetectada,
       confianza,
       razon,
     };
@@ -100,7 +131,7 @@ function normalizarResultadoLLM(resultado, fallback = {}) {
 
   return {
     clasificacion,
-    amenazas_detectadas: amenazasDetectadas,
+    amenazas_detectadas: amenazaDetectada,
     confianza,
     razon,
   };
@@ -114,9 +145,8 @@ function normalizarNivelIA(nivel) {
 function notificarAlertaSeguridadDesdeClasificacion(req, classification, meta = {}) {
   if (!classification) return;
 
-  const amenazas = Array.isArray(classification.amenazas_detectadas)
-    ? classification.amenazas_detectadas
-    : [];
+  const amenaza = normalizarAmenazaTexto(classification.amenazas_detectadas, 'NINGUNA');
+  const amenazas = amenaza !== 'NINGUNA' ? [amenaza] : [];
 
   const clasificacion = String(classification.clasificacion || '').toLowerCase();
   if (clasificacion !== RISK_THRESHOLDS.HIGH && clasificacion !== RISK_THRESHOLDS.MEDIUM) return;
@@ -127,10 +157,10 @@ function notificarAlertaSeguridadDesdeClasificacion(req, classification, meta = 
   const ip = obtenerIpCliente(req);
 
   let tipo = 'PETICION_SOSPECHOSA';
-  if (amenazas.includes('SQL_INJECTION')) tipo = 'SQL_INJECTION';
-  else if (amenazas.includes('XSS')) tipo = 'XSS';
-  else if (amenazas.includes('POTENTIAL_SCRAPER')) tipo = 'SCRAPING';
-  else if (amenazas.includes('SUSPICIOUS_ADMIN_ACCESS')) tipo = 'ACCESO_ADMIN_SOSPECHOSO';
+  if (amenaza === 'SQL_INJECTION') tipo = 'SQL_INJECTION';
+  else if (amenaza === 'XSS') tipo = 'XSS';
+  else if (amenaza === 'SCRAPING' || amenaza === 'POTENTIAL_SCRAPER') tipo = 'SCRAPING';
+  else if (amenaza === 'SUSPICIOUS_ADMIN_ACCESS') tipo = 'ACCESO_ADMIN_SOSPECHOSO';
 
   const nivel = clasificacion === RISK_THRESHOLDS.HIGH ? 'ALTO' : 'MEDIO';
 
@@ -266,11 +296,15 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
         - "riesgo-alto": Ataques claros y probados. Ej: Inyección SQL evidente, XSS con payloads ejecutables, Remote Code Execution (RCE), Path Traversal (../etc/passwd), LFI/RFI.
         - "riesgo-medio": Comportamiento anómalo o herramientas sospechosas. Ej: User-Agents de escáneres (Nmap, Nikto), intentos de scraping, caracteres inusuales en campos comunes, peticiones malformadas.
         - "legitimo": Tráfico normal, sin firmas maliciosas.
+
+        CONFIANZA: Del 0.0 al 1.0, indica qué tan seguro estás de la clasificación. Sé conservador: si dudas entre medio y alto, elige medio.
+
+        amenazas_detectadas: Texto único con la amenaza más probable. Ej: "SQL_INJECTION", "XSS", "PATH_TRAVERSAL", "RCE", "SCRAPING", "SUSPICIOUS_ADMIN_ACCESS", "ANOMALIA_HEADERS". Si no detectas ninguna, responde "NINGUNA".
         
         FORMATO DE RESPUESTA:
         {
           "clasificacion": "riesgo-alto" | "riesgo-medio" | "legitimo",
-          "amenazas_detectadas": ["SQLi", "XSS", "Path Traversal", "Scraping", "RCE", "Anomalia_Headers", "Ninguna"],
+          "amenazas_detectadas": "SQL_INJECTION" | "XSS" | "PATH_TRAVERSAL" | "SCRAPING" | "RCE" | "SUSPICIOUS_ADMIN_ACCESS" | "ANOMALIA_HEADERS" | "NINGUNA",
           "confianza": 0.0-1.0,
           "razon": "Justificación técnica de máximo 20 palabras."
         }`;
@@ -343,8 +377,9 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
               enum: ['riesgo-alto', 'riesgo-medio', 'legitimo'],
             },
             amenazas_detectadas: {
-              type: 'array',
-              items: { type: 'string' },
+              type: 'string',
+              minLength: 1,
+              maxLength: 80,
             },
             confianza: {
               type: 'number',
@@ -446,7 +481,7 @@ async function aiClassifierMiddleware(req, res, next) {
 
   let classification = {
     clasificacion: RISK_THRESHOLDS.LOW,
-    amenazas_detectadas: [],
+    amenazas_detectadas: 'NINGUNA',
     confianza: 1.0,
     razon: 'Sin análisis',
     metodo: 'none',
@@ -459,7 +494,7 @@ async function aiClassifierMiddleware(req, res, next) {
   let heuristicContext = {
     heuristica_ejecutada: false,
     clasificacion_heuristica: 'N/A',
-    amenazas_heuristica: [],
+    amenazas_heuristica: 'NINGUNA',
     puntaje_heuristica: 0,
     razon_heuristica: 'Heurística no ejecutada',
   };
@@ -490,7 +525,7 @@ async function aiClassifierMiddleware(req, res, next) {
       classification = {
         ...classification,
         clasificacion: quickResult.quickClassification,
-        amenazas_detectadas: quickResult.threats,
+        amenazas_detectadas: obtenerAmenazaPrincipalDesdeLista(quickResult.threats),
         confianza: quickResult.quickClassification === RISK_THRESHOLDS.LOW ? 0.95 : 0.85,
         razon: quickResult.quickClassification === RISK_THRESHOLDS.LOW
           ? 'Sin indicadores de amenaza por heurística'
@@ -521,7 +556,7 @@ async function aiClassifierMiddleware(req, res, next) {
           }
 
           res.setHeader('X-Security-Risk', 'high');
-          res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+          res.setHeader('X-Security-Threats', classification.amenazas_detectadas || 'NINGUNA');
           res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
           classification.metodo = 'heuristic-high-no-block';
           classification.razon = `${classification.razon} | BLOQIP=0, bloqueo omitido`;
@@ -549,7 +584,7 @@ async function aiClassifierMiddleware(req, res, next) {
       classification = {
         ...classification,
         clasificacion: RISK_THRESHOLDS.LOW,
-        amenazas_detectadas: [],
+        amenazas_detectadas: 'NINGUNA',
         confianza: 0.0,
         razon: 'Heurística desactivada para esta API',
         metodo: 'heuristic-disabled',
@@ -558,7 +593,7 @@ async function aiClassifierMiddleware(req, res, next) {
       heuristicContext = {
         heuristica_ejecutada: false,
         clasificacion_heuristica: 'NO_APLICA',
-        amenazas_heuristica: [],
+        amenazas_heuristica: 'NINGUNA',
         puntaje_heuristica: 0,
         razon_heuristica: 'Heurística desactivada para esta API',
       };
@@ -568,7 +603,7 @@ async function aiClassifierMiddleware(req, res, next) {
     if (nivelIAEfectivo === 'NO') {
       if (classification.clasificacion === RISK_THRESHOLDS.MEDIUM) {
         res.setHeader('X-Security-Risk', 'medium');
-        res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+        res.setHeader('X-Security-Threats', classification.amenazas_detectadas || 'NINGUNA');
         res.setHeader('X-Security-IA-Level', nivelIAEfectivo);
       }
 
@@ -645,10 +680,9 @@ async function aiClassifierMiddleware(req, res, next) {
     await metrics.incr(`ai:clasificaciones:${classification.clasificacion}`);
     await metrics.incr(`ai:metodo:${classification.metodo}`);
     await metrics.incr(`ai:nivel:${nivelIAEfectivo}`);
-    if (classification.amenazas_detectadas?.length > 0) {
-      for (const threat of classification.amenazas_detectadas) {
-        await metrics.incr(`ai:amenaza:${threat}`);
-      }
+    const amenazaPrincipal = normalizarAmenazaTexto(classification.amenazas_detectadas, 'NINGUNA');
+    if (amenazaPrincipal !== 'NINGUNA') {
+      await metrics.incr(`ai:amenaza:${amenazaPrincipal}`);
     }
   } catch (metricsError) {
     console.error('[AI-CLASSIFIER] Error registrando métricas:', metricsError.message);
@@ -697,7 +731,7 @@ async function aiClassifierMiddleware(req, res, next) {
     }
 
     res.setHeader('X-Security-Risk', 'high');
-    res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+    res.setHeader('X-Security-Threats', classification.amenazas_detectadas || 'NINGUNA');
     res.setHeader('X-Security-IA-Level', nivelIAEfectivo);
     res.setHeader('X-Security-Block-Mode', 'disabled-by-BLOQIP');
   }
@@ -710,7 +744,7 @@ async function aiClassifierMiddleware(req, res, next) {
 
     // Permitir pero añadir headers de advertencia
     res.setHeader('X-Security-Risk', classification.clasificacion === RISK_THRESHOLDS.HIGH ? 'high' : 'medium');
-    res.setHeader('X-Security-Threats', classification.amenazas_detectadas.join(','));
+    res.setHeader('X-Security-Threats', classification.amenazas_detectadas || 'NINGUNA');
     res.setHeader('X-Security-IA-Level', nivelIAEfectivo);
     try {
       await metrics.incr(`ai:advertencias:${uuid}`);

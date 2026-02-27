@@ -198,6 +198,7 @@ Para comparar rendimiento IA vs no IA, ejecuta también:
 
 - `supabase_historial_ia_performance.sql`
 - `supabase_add_latencia_heuristica.sql`
+- `supabase_amenazas_ia_texto.sql`
 
 Este script agrega en `historial_peticiones`:
 
@@ -207,6 +208,7 @@ Este script agrega en `historial_peticiones`:
 - `latencia_heuristica_ms`: tiempo de evaluación heurística
 - `razon_ia`: justificación textual de la clasificación IA/heurística
 - `nivel_ia`: nivel aplicado en esa petición (`NO`, `BAJO`, `ALTO`)
+- `amenazas_ia`: amenaza principal como texto (ej. `SQL_INJECTION`, `XSS`, `SCRAPING`, `NINGUNA`)
 
 ### Variables de entorno (histórico)
 

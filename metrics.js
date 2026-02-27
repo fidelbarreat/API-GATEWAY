@@ -25,7 +25,7 @@ async function metricsMiddleware(req, res, next) {
       ip_cliente: obtenerIpCliente(req),
       agente_usuario: req.headers['user-agent'] || null,
       clasificacion_ia: ai.clasificacion || null,
-      amenazas_ia: ai.amenazas_detectadas || [],
+      amenazas_ia: String(ai.amenazas_detectadas || 'NINGUNA'),
       confianza_ia: typeof ai.confianza === 'number' ? ai.confianza : null,
       razon_ia: ai.razon || null,
       nivel_ia: ai.nivel_ia || null,
