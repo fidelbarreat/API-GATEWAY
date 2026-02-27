@@ -3,6 +3,20 @@ const { metrics } = require('./redis');
 const { encolarRequestLog } = require('./request-history');
 const { obtenerIpCliente } = require('./ip-utils');
 
+function normalizarAmenazaParaPersistencia(valor) {
+  if (Array.isArray(valor)) {
+    const primera = String(valor[0] || '').trim();
+    return primera || 'NINGUNA';
+  }
+
+  const texto = String(valor || '').trim();
+  if (!texto || texto === '[]' || texto === '{}' || texto.toLowerCase() === 'null') {
+    return 'NINGUNA';
+  }
+
+  return texto;
+}
+
 async function metricsMiddleware(req, res, next) {
   const start = Date.now();
   const fechaPeticion = new Date(start).toISOString();
@@ -25,7 +39,7 @@ async function metricsMiddleware(req, res, next) {
       ip_cliente: obtenerIpCliente(req),
       agente_usuario: req.headers['user-agent'] || null,
       clasificacion_ia: ai.clasificacion || null,
-      amenazas_ia: String(ai.amenazas_detectadas || 'NINGUNA'),
+      amenazas_ia: normalizarAmenazaParaPersistencia(ai.amenazas_detectadas),
       confianza_ia: typeof ai.confianza === 'number' ? ai.confianza : null,
       razon_ia: ai.razon || null,
       nivel_ia: ai.nivel_ia || null,

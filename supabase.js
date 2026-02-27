@@ -38,6 +38,20 @@ function normalizarNivelIA(nivel) {
   return NIVELES_IA_VALIDOS.has(nivelNormalizado) ? nivelNormalizado : 'BAJO';
 }
 
+function normalizarAmenazaPersistida(valor) {
+  if (Array.isArray(valor)) {
+    const primera = String(valor[0] || '').trim();
+    return primera || 'NINGUNA';
+  }
+
+  const texto = String(valor || '').trim();
+  if (!texto || texto === '[]' || texto === '{}' || texto.toLowerCase() === 'null') {
+    return 'NINGUNA';
+  }
+
+  return texto;
+}
+
 function mapearApi(row) {
   const emailNotificacion = String(row.email_notificacion || '').trim();
 
@@ -100,7 +114,7 @@ function mapearRegistroPeticion(log) {
     ip_cliente: log.ip_cliente || null,
     agente_usuario: log.agente_usuario || null,
     clasificacion_ia: log.clasificacion_ia || null,
-    amenazas_ia: String(log.amenazas_ia || 'NINGUNA'),
+    amenazas_ia: normalizarAmenazaPersistida(log.amenazas_ia),
     confianza_ia: typeof log.confianza_ia === 'number' ? log.confianza_ia : null,
     razon_ia: log.razon_ia || null,
     nivel_ia: log.nivel_ia || null,

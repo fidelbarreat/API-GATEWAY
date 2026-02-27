@@ -22,6 +22,20 @@ let totalErroresSincronizacion = 0;
 let ultimaSincronizacion = null;
 let ultimoErrorSincronizacion = null;
 
+function normalizarAmenazaPersistida(valor) {
+  if (Array.isArray(valor)) {
+    const primera = String(valor[0] || '').trim();
+    return primera || 'NINGUNA';
+  }
+
+  const texto = String(valor || '').trim();
+  if (!texto || texto === '[]' || texto === '{}' || texto.toLowerCase() === 'null') {
+    return 'NINGUNA';
+  }
+
+  return texto;
+}
+
 function encolarRequestLog(log) {
   const registroPeticion = {
     id_peticion: randomUUID(),
@@ -34,7 +48,7 @@ function encolarRequestLog(log) {
     ip_cliente: log.ip_cliente || null,
     agente_usuario: log.agente_usuario || null,
     clasificacion_ia: log.clasificacion_ia || null,
-    amenazas_ia: String(log.amenazas_ia || 'NINGUNA'),
+    amenazas_ia: normalizarAmenazaPersistida(log.amenazas_ia),
     confianza_ia: typeof log.confianza_ia === 'number' ? log.confianza_ia : null,
     razon_ia: log.razon_ia || null,
     nivel_ia: log.nivel_ia || null,
