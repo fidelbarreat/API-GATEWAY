@@ -248,7 +248,7 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
     throw new Error('OPENAI_API_KEY no configurada');
   }
 
-  const { url, method, headers, body, ip, queryParams, serviceTierPriority } = requestData;
+  const { url, method, headers, body, ip, queryParams, serviceTierPriority, heuristicContext } = requestData;
 
   const bodyString = JSON.stringify(body || {});
   const finalBody = bodyString.length > 1000 
@@ -275,21 +275,24 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
           "razon": "Justificación técnica de máximo 20 palabras."
         }`;
 
-  const prompt = `Analiza la siguiente petición:
-
-  {
-    "ip": "${ip}",
-    "metodo": "${method}",
-    "ruta": "${url}",
-    "query_params": ${JSON.stringify(queryParams || {})},
-    "headers": {
-      "user-agent": "${headers?.['user-agent'] || 'N/A'}",
-      "content-type": "${headers?.['content-type'] || 'N/A'}",
-      "host": "${headers?.['host'] || 'N/A'}"
+  const payloadAnalisis = {
+    ip,
+    metodo: method,
+    ruta: url,
+    query_params: queryParams || {},
+    headers: {
+      'user-agent': headers?.['user-agent'] || 'N/A',
+      'content-type': headers?.['content-type'] || 'N/A',
+      host: headers?.['host'] || 'N/A',
     },
-    "body_preview": "${finalBody}"
+    body_preview: finalBody,
+  };
+
+  if (heuristicContext?.heuristica_ejecutada === true) {
+    payloadAnalisis.contexto_heuristico_previo = heuristicContext;
   }
-  `;
+
+  const prompt = `Analiza la siguiente petición:\n\n${JSON.stringify(payloadAnalisis, null, 2)}`;
 
   const basePayload = {
     model: AI_MODEL,
@@ -453,6 +456,13 @@ async function aiClassifierMiddleware(req, res, next) {
     heuristicLatencyMs: 0,
     paso_por_llm: false,
   };
+  let heuristicContext = {
+    heuristica_ejecutada: false,
+    clasificacion_heuristica: 'N/A',
+    amenazas_heuristica: [],
+    puntaje_heuristica: 0,
+    razon_heuristica: 'Heurística no ejecutada',
+  };
 
   try {
     // Paso 1: Análisis heurístico (solo si está activado por API)
@@ -487,6 +497,14 @@ async function aiClassifierMiddleware(req, res, next) {
           : `Detectado por heurísticas: ${quickResult.threats.join(', ')}`,
         metodo: quickResult.quickClassification === RISK_THRESHOLDS.LOW ? 'heuristic-clean' : 'heuristic',
         heuristicLatencyMs: latenciaHeuristicaMs,
+      };
+
+      heuristicContext = {
+        heuristica_ejecutada: true,
+        clasificacion_heuristica: classification.clasificacion,
+        amenazas_heuristica: classification.amenazas_detectadas,
+        puntaje_heuristica: quickResult.riskScore,
+        razon_heuristica: classification.razon,
       };
 
       if (classification.clasificacion === RISK_THRESHOLDS.HIGH) {
@@ -536,6 +554,14 @@ async function aiClassifierMiddleware(req, res, next) {
         razon: 'Heurística desactivada para esta API',
         metodo: 'heuristic-disabled',
       };
+
+      heuristicContext = {
+        heuristica_ejecutada: false,
+        clasificacion_heuristica: 'NO_APLICA',
+        amenazas_heuristica: [],
+        puntaje_heuristica: 0,
+        razon_heuristica: 'Heurística desactivada para esta API',
+      };
     }
 
     // Paso 2: Si nivel_ia es NO, conservar resultado de heurística
@@ -562,7 +588,10 @@ async function aiClassifierMiddleware(req, res, next) {
     // Paso 3: nivel_ia BAJO/ALTO => llamar IA (sin depender de heurística)
     if (OPENAI_API_KEY) {
       try {
-        const llmResult = await classifyWithLLM(requestData, {
+        const llmResult = await classifyWithLLM({
+          ...requestData,
+          heuristicContext,
+        }, {
           clasificacion: classification.clasificacion,
           confianza: classification.confianza,
           razon: classification.razon,
