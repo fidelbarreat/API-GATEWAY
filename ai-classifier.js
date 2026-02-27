@@ -510,10 +510,27 @@ async function aiClassifierMiddleware(req, res, next) {
     // Paso 1: Análisis heurístico (solo si está activado por API)
     let quickResult = null;
     if (heuristicaActivada) {
-      const inicioHeuristica = Date.now();
+      const inicioHeuristicaTs = Date.now();
+      const inicioHeuristica = performance.now();
       quickResult = quickAnalysis(requestData);
-      const latenciaHeuristicaMs = Math.max(1, Date.now() - inicioHeuristica);
+      const finHeuristica = performance.now();
+      const finHeuristicaTs = Date.now();
+      const latenciaHeuristicaMs = Number((finHeuristica - inicioHeuristica).toFixed(3));
       classification.heuristicLatencyMs = latenciaHeuristicaMs;
+
+      if (AI_DEBUG) {
+        console.log('[AI-CLASSIFIER][DEBUG] Timing heurística:', {
+          uuid,
+          metodo: req.method,
+          ruta: req.originalUrl || req.url,
+          inicio_ts: inicioHeuristicaTs,
+          fin_ts: finHeuristicaTs,
+          duracion_ms: latenciaHeuristicaMs,
+          skipped: quickResult?.skipped === true,
+          amenazas: Array.isArray(quickResult?.threats) ? quickResult.threats : [],
+          riskScore: typeof quickResult?.riskScore === 'number' ? quickResult.riskScore : null,
+        });
+      }
 
       if (quickResult.skipped) {
         req.aiClassification = {

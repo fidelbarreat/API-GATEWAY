@@ -36,6 +36,11 @@ function normalizarAmenazaPersistida(valor) {
   return texto;
 }
 
+function normalizarLatenciaPromediable(valor) {
+  if (typeof valor !== 'number' || !Number.isFinite(valor)) return null;
+  return valor > 0 ? valor : null;
+}
+
 function encolarRequestLog(log) {
   const registroPeticion = {
     id_peticion: randomUUID(),
@@ -55,7 +60,7 @@ function encolarRequestLog(log) {
     heuristica_activada: log.heuristica_activada === true,
     metodo_ia: log.metodo_ia || null,
     paso_por_llm: Boolean(log.paso_por_llm),
-    latencia_ia_ms: typeof log.latencia_ia_ms === 'number' ? log.latencia_ia_ms : 0,
+    latencia_ia_ms: normalizarLatenciaPromediable(log.latencia_ia_ms),
     latencia_heuristica_ms: typeof log.latencia_heuristica_ms === 'number' ? log.latencia_heuristica_ms : 0,
   };
 

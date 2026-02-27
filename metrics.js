@@ -3,6 +3,11 @@ const { metrics } = require('./redis');
 const { encolarRequestLog } = require('./request-history');
 const { obtenerIpCliente } = require('./ip-utils');
 
+function normalizarLatenciaPromediable(valor) {
+  if (typeof valor !== 'number' || !Number.isFinite(valor)) return null;
+  return valor > 0 ? valor : null;
+}
+
 function normalizarAmenazaParaPersistencia(valor) {
   if (Array.isArray(valor)) {
     const primera = String(valor[0] || '').trim();
@@ -46,7 +51,7 @@ async function metricsMiddleware(req, res, next) {
       heuristica_activada: ai.heuristica_activada === true,
       metodo_ia: ai.metodo || null,
       paso_por_llm: ai.paso_por_llm === true,
-      latencia_ia_ms: typeof ai.llmLatencyMs === 'number' ? ai.llmLatencyMs : 0,
+      latencia_ia_ms: normalizarLatenciaPromediable(ai.llmLatencyMs),
       latencia_heuristica_ms: typeof ai.heuristicLatencyMs === 'number' ? ai.heuristicLatencyMs : 0,
     });
   });
