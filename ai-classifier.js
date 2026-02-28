@@ -143,6 +143,11 @@ function normalizarNivelIA(nivel) {
   return NIVELES_IA_VALIDOS.has(nivelNormalizado) ? nivelNormalizado : 'BAJO';
 }
 
+function normalizarModeloIA(modelo) {
+  const valor = String(modelo || '').trim();
+  return valor || AI_MODEL;
+}
+
 function notificarAlertaSeguridadDesdeClasificacion(req, classification, meta = {}) {
   if (!classification) return;
 
@@ -280,6 +285,7 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
   }
 
   const { url, method, headers, body, ip, queryParams, serviceTierPriority, heuristicContext } = requestData;
+  const model = normalizarModeloIA(requestData.model);
 
   const bodyString = JSON.stringify(body || {});
   const finalBody = bodyString.length > 1000 
@@ -330,7 +336,7 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
   const prompt = `Analiza la siguiente petición:\n\n${JSON.stringify(payloadAnalisis, null, 2)}`;
 
   const basePayload = {
-    model: AI_MODEL,
+    model,
     messages: [
       { role: 'system', content: instrucciones },
       { role: 'user', content: prompt }
@@ -452,6 +458,7 @@ async function classifyWithLLM(requestData, fallbackResultado = {}) {
 
   return {
     ...normalizarResultadoLLM(parsed, fallbackResultado),
+    model,
     llmLatencyMs: latenciaSolicitudesLLMMs,
   };
 }
@@ -467,6 +474,7 @@ async function aiClassifierMiddleware(req, res, next) {
   const bloqueoIpActivo = await isIpBlockingEnabled();
   const nivelIAApi = normalizarNivelIA(req.apiConfig?.nivel_ia);
   const nivelIAEfectivo = nivelIAApi;
+  const modeloIAEfectivo = normalizarModeloIA(req.apiConfig?.ai_model);
   const heuristicaActivada = req.apiConfig?.heuristica_activada !== false;
   const permiteBloqueo = nivelIAEfectivo === 'ALTO' && bloqueoIpActivo;
 
@@ -476,6 +484,7 @@ async function aiClassifierMiddleware(req, res, next) {
     method: req.method,
     url: req.originalUrl || req.url,
     queryParams: req.query,
+    model: modeloIAEfectivo,
     serviceTierPriority: req.apiConfig?.service_tier_priority === true,
     headers: {
       'user-agent': req.headers['user-agent'],
@@ -493,6 +502,7 @@ async function aiClassifierMiddleware(req, res, next) {
     razon: 'Sin análisis',
     metodo: 'none',
     nivel_ia: nivelIAEfectivo,
+    ai_model: modeloIAEfectivo,
     heuristica_activada: heuristicaActivada,
     llmLatencyMs: 0,
     heuristicLatencyMs: 0,
@@ -537,6 +547,7 @@ async function aiClassifierMiddleware(req, res, next) {
           ...classification,
           metodo: 'static-skip',
           razon: 'Recurso estático, análisis omitido',
+          ai_model: modeloIAEfectivo,
           timestamp: new Date().toISOString(),
           latencyMs: Date.now() - startTime,
           llmLatencyMs: 0,
@@ -635,6 +646,7 @@ async function aiClassifierMiddleware(req, res, next) {
         ...classification,
         metodo: `${classification.metodo}-solo-heuristica`,
         razon: `${classification.razon} (nivel_ia=NO)`,
+        ai_model: modeloIAEfectivo,
         timestamp: new Date().toISOString(),
         latencyMs: Date.now() - startTime,
         llmLatencyMs: 0,
@@ -659,6 +671,7 @@ async function aiClassifierMiddleware(req, res, next) {
           ...classification,
           ...llmResult,
           metodo: 'llm',
+          ai_model: llmResult.model || modeloIAEfectivo,
           llmLatencyMs: typeof llmResult.llmLatencyMs === 'number' ? llmResult.llmLatencyMs : 0,
           paso_por_llm: true,
         };
@@ -669,7 +682,7 @@ async function aiClassifierMiddleware(req, res, next) {
           status: llmError.status || null,
           llmLatencyMs: typeof llmError.llmLatencyMs === 'number' ? llmError.llmLatencyMs : null,
           timeoutMs: AI_TIMEOUT,
-          model: AI_MODEL,
+          model: modeloIAEfectivo,
           uuid,
           nivel_ia: nivelIAEfectivo,
           metodo: req.method,
@@ -693,6 +706,7 @@ async function aiClassifierMiddleware(req, res, next) {
           confianza: Math.max(classification.confianza || 0, 0.6),
           razon: `${classification.razon} | Fallback por error LLM`,
           metodo: `${classification.metodo}-fallback-llm`,
+          ai_model: modeloIAEfectivo,
           llmLatencyMs: typeof llmError.llmLatencyMs === 'number' ? llmError.llmLatencyMs : 0,
           paso_por_llm: true,
         };
@@ -702,6 +716,7 @@ async function aiClassifierMiddleware(req, res, next) {
         ...classification,
         razon: `${classification.razon} | OPENAI_API_KEY no configurada`,
         metodo: `${classification.metodo}-sin-llm`,
+        ai_model: modeloIAEfectivo,
       };
     }
 
@@ -712,6 +727,7 @@ async function aiClassifierMiddleware(req, res, next) {
     // En caso de error, permitir pasar (fail-open para no bloquear tráfico legítimo)
     req.aiClassification = {
       ...classification,
+      ai_model: modeloIAEfectivo,
       timestamp: new Date().toISOString(),
       latencyMs: Date.now() - startTime,
       llmLatencyMs: 0,
@@ -805,6 +821,7 @@ async function aiClassifierMiddleware(req, res, next) {
   req.aiClassification = {
     ...classification,
     nivel_ia: nivelIAEfectivo,
+    ai_model: classification.ai_model || modeloIAEfectivo,
     latencyMs,
     llmLatencyMs: typeof classification.llmLatencyMs === 'number' ? classification.llmLatencyMs : 0,
     heuristicLatencyMs: typeof classification.heuristicLatencyMs === 'number' ? classification.heuristicLatencyMs : 0,
@@ -838,7 +855,8 @@ async function getAIMetrics() {
         ai_enabled_global: true,
         modo: 'por-api',
         niveles_soportados: ['NO', 'BAJO', 'ALTO'],
-        model: AI_MODEL,
+        model_default: AI_MODEL,
+        model_source: 'apis.ai_model -> fallback .env AI_MODEL',
         timeout_ms: AI_TIMEOUT
       }
     };
@@ -852,7 +870,8 @@ async function getAIMetrics() {
         ai_enabled_global: true,
         modo: 'por-api',
         niveles_soportados: ['NO', 'BAJO', 'ALTO'],
-        model: AI_MODEL,
+        model_default: AI_MODEL,
+        model_source: 'apis.ai_model -> fallback .env AI_MODEL',
         timeout_ms: AI_TIMEOUT
       }
     };

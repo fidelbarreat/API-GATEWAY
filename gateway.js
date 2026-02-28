@@ -131,7 +131,8 @@ app.get('/gateway/ai/status', (_req, res) => {
     enabled: true,
     mode: 'per-api',
     niveles_ia_soportados: ['NO', 'BAJO', 'ALTO'],
-    model: process.env.AI_MODEL || 'gpt-5-mini',
+    model_default: process.env.AI_MODEL || 'gpt-5-mini',
+    model_source: 'apis.ai_model -> fallback .env AI_MODEL',
     api_key_configured: !!process.env.OPENAI_API_KEY
   });
 });

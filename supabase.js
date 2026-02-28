@@ -23,6 +23,7 @@ const TABLA_CONFIGURACION = process.env.SUPABASE_TABLA_CONFIGURACION || 'configu
 const NIVELES_IA_VALIDOS = new Set(['NO', 'BAJO', 'ALTO']);
 const CONFIG_CACHE_TTL_MS = Number(process.env.CONFIG_CACHE_TTL_MS || 10_000);
 const CONFIG_REFRESH_INTERVAL_MS = Number(process.env.CONFIG_REFRESH_INTERVAL_MS || 60_000);
+const DEFAULT_AI_MODEL = String(process.env.AI_MODEL || 'gpt-5-mini').trim() || 'gpt-5-mini';
 
 const cacheConfiguracion = new Map();
 let temporizadorConfig = null;
@@ -36,6 +37,11 @@ function normalizarUrlDestino(url) {
 function normalizarNivelIA(nivel) {
   const nivelNormalizado = String(nivel || 'BAJO').trim().toUpperCase();
   return NIVELES_IA_VALIDOS.has(nivelNormalizado) ? nivelNormalizado : 'BAJO';
+}
+
+function normalizarModeloIA(modelo) {
+  const valor = String(modelo || '').trim();
+  return valor || DEFAULT_AI_MODEL;
 }
 
 function normalizarAmenazaPersistida(valor) {
@@ -52,9 +58,13 @@ function normalizarAmenazaPersistida(valor) {
   return texto;
 }
 
-function normalizarLatenciaPromediable(valor) {
-  if (typeof valor !== 'number' || !Number.isFinite(valor)) return null;
-  return valor > 0 ? valor : null;
+function normalizarLatenciaEntera(valor, { permitirNull = false } = {}) {
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return permitirNull ? null : 0;
+
+  const ms = Math.round(numero);
+  if (ms <= 0) return permitirNull ? null : 0;
+  return ms;
 }
 
 function mapearApi(row) {
@@ -67,6 +77,7 @@ function mapearApi(row) {
     descripcion: row.descripcion || null,
     activa: Boolean(row.activo),
     nivel_ia: normalizarNivelIA(row.nivel_ia),
+    ai_model: normalizarModeloIA(row.ai_model),
     heuristica_activada: row.heuristica_activada !== false,
     email_notificacion: emailNotificacion || null,
     service_tier_priority: row.service_tier_priority === true,
@@ -80,7 +91,7 @@ async function fetchApis() {
 
   const { data, error } = await supabase
     .from('apis')
-    .select('api_id,nombre,url,descripcion,activo,nivel_ia,heuristica_activada,email_notificacion,service_tier_priority');
+    .select('api_id,nombre,url,descripcion,activo,nivel_ia,ai_model,heuristica_activada,email_notificacion,service_tier_priority');
 
   if (error) {
     throw new Error(error.message || 'Error consultando Supabase');
@@ -96,6 +107,7 @@ async function fetchApis() {
         descripcion: api.descripcion,
         activa: api.activa,
         nivel_ia: api.nivel_ia,
+        ai_model: api.ai_model,
         heuristica_activada: api.heuristica_activada,
         email_notificacion: api.email_notificacion,
         service_tier_priority: api.service_tier_priority,
@@ -115,7 +127,7 @@ function mapearRegistroPeticion(log) {
     metodo: log.metodo,
     ruta: log.ruta,
     codigo_estado: Number(log.codigo_estado),
-    latencia_ms: Number(log.latencia_ms),
+    latencia_ms: normalizarLatenciaEntera(log.latencia_ms),
     ip_cliente: log.ip_cliente || null,
     agente_usuario: log.agente_usuario || null,
     clasificacion_ia: log.clasificacion_ia || null,
@@ -126,8 +138,8 @@ function mapearRegistroPeticion(log) {
     heuristica_activada: log.heuristica_activada === true,
     metodo_ia: log.metodo_ia || null,
     paso_por_llm: Boolean(log.paso_por_llm),
-    latencia_ia_ms: normalizarLatenciaPromediable(log.latencia_ia_ms),
-    latencia_heuristica_ms: typeof log.latencia_heuristica_ms === 'number' ? log.latencia_heuristica_ms : 0,
+    latencia_ia_ms: normalizarLatenciaEntera(log.latencia_ia_ms, { permitirNull: true }),
+    latencia_heuristica_ms: normalizarLatenciaEntera(log.latencia_heuristica_ms),
   };
 }
 

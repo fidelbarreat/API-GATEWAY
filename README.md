@@ -55,6 +55,13 @@ node test-healthcheck.js ataques
 npm run repeat:get
 ```
 
+Por defecto, `repeat-get` ahora corre en **modo campaña** (`REPEAT_GET_MODE=all`):
+
+- consulta `GET /gateway/apis`
+- detecta escenario por nombre de API (`Normal`, `SQL Injection`, `XSS`, `Path Traversal`, `Scraping`, `Admin`, `DDoS`)
+- ejecuta requests según corresponda para cada API
+- envía `50` peticiones por API (configurable)
+
 Opcional por CLI:
 
 ```bash
@@ -70,10 +77,31 @@ Variables opcionales para la simulación:
 Variables para `repeat-get.js`:
 
 - `REPEAT_GET_URL`: URL completa objetivo para GET periódico.
+- `REPEAT_GET_MODE`: `all` (campaña por todas las APIs) o `single` (una URL específica). Default: `all` si no pasas `REPEAT_GET_URL`.
+- `REPEAT_GET_GATEWAY_BASE`: base del gateway para modo `all`. Default: `https://api-gateway-test-hn9e.onrender.com`.
+- `REPEAT_GET_METHOD`: método HTTP (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`). Default: `GET`.
+- `REPEAT_GET_USER_AGENT`: valor del header `User-Agent` (UA). Default: `api-gateway-repeat-get/1.0`.
+- `REPEAT_GET_BODY_JSON`: body en JSON (solo aplica para métodos con body, ej. `POST/PUT/PATCH/DELETE`).
+- `REPEAT_GET_HEADERS_JSON`: headers extra en JSON. Ej: `{"x-test":"1"}`.
+- `REPEAT_GET_APPEND_COUNTER`: agrega `?n={i}` o `&n={i}` en cada request para variar la URL. Default: `false`.
 - `REPEAT_GET_INTERVAL_MS`: intervalo base entre requests (default `1500`).
 - `REPEAT_GET_JITTER_MS`: variación aleatoria para evitar patrón fijo (default `150`).
 - `REPEAT_GET_REQUESTS`: cantidad total de requests (default `30`).
+- `REPEAT_GET_REQUESTS_PER_API`: cantidad total por API en modo `all` (default `50`).
 - `REPEAT_GET_TIMEOUT_MS`: timeout por request (default `8000`).
+- `REPEAT_GET_API_NAME_FILTER`: filtro opcional por nombre de API en modo `all`.
+
+`UA` significa **User-Agent**: el identificador del cliente HTTP (navegador, curl, bot, script). En el gateway se usa como señal para detectar scraping/bots.
+
+Ejemplos para simular ataques con `repeat-get`:
+
+```bash
+# Scraping por UA bot-like
+REPEAT_GET_URL="https://tu-gateway/UUID/catalogo?page=1" REPEAT_GET_METHOD=GET REPEAT_GET_USER_AGENT="python-requests/2.31" REPEAT_GET_REQUESTS=20 npm run repeat:get
+
+# Acceso admin sospechoso (método sensible + ruta admin + UA curl)
+REPEAT_GET_URL="https://tu-gateway/UUID/admin/users/1" REPEAT_GET_METHOD=DELETE REPEAT_GET_USER_AGENT="curl/8.4.0" REPEAT_GET_REQUESTS=10 npm run repeat:get
+```
 
 ### Checklist rápido (end-to-end)
 
@@ -136,10 +164,13 @@ Columna opcional por API en `apis`:
 
 - `service_tier_priority` (`boolean`, default `false`): cuando está en `true`, el gateway solicita al LLM `service_tier: "priority"`.
   - Si la API rechaza ese parámetro, el gateway hace fallback automático al tier estándar para no interrumpir clasificación.
+- `ai_model` (`text`, opcional): modelo LLM a usar para esa API. Ejemplos: `gpt-5-mini`, `gpt-5.1-mini`.
+  - Si viene vacío o nulo, usa fallback global `AI_MODEL` del `.env`.
 
 Script SQL para crear la columna:
 
 - `supabase_add_service_tier_priority.sql`
+- `supabase_add_ai_model.sql`
 
 Si `nivel_ia` no existe o viene inválido, el gateway usa `BAJO` por defecto.
 
@@ -319,7 +350,7 @@ curl localhost:3000/gateway/ai/metrics
 | Variable | Descripción | Default |
 |----------|-------------|---------|
 | `OPENAI_API_KEY` | API key de OpenAI | - |
-| `AI_MODEL` | Modelo a usar | `gpt-5-mini` |
+| `AI_MODEL` | Modelo por defecto (fallback si `apis.ai_model` no está definido) | `gpt-5-mini` |
 | `AI_ENABLED` | Activar/desactivar IA | `true` |
 | `AI_TIMEOUT` | Timeout para llamadas LLM (ms) | `5000` |
 | `BLACKLIST_TTL_AI` | TTL de bloqueo por IA (seg) | `3600`|
